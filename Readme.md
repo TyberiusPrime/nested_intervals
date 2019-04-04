@@ -3,8 +3,8 @@ A library to deal with interval sets.
 We can
 - [x] build them
 - [x] check for overlap with a query range
-- [ ] query for overlapping with a query range
-- [ ] query for overlpping with a query set
+- [x] query for overlapping with a query range
+- [x] query for overlapping with a query set
 - [ ] query for non-overlapping with a query set
 - [ ] check for internally overlapping
 - [ ] remove duplicate intervals
