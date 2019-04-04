@@ -21,7 +21,7 @@ We can
 - [ ] find the interval with the closest end to the right of a point
 - [x] calculate the units covered by the intervals -> covered_units() 
 - [x] find the mean size of the intervals
-- [ ] build the union of n interval sets
+- [x] build the union of n interval sets
 - [ ] substract two interval sets 
 - [ ] keep only those overlapping with n other sets
 - [ ] remove those overlapping with more than n other sets

@@ -236,7 +236,7 @@ impl NCList {
         if !self.is_empty() {
             let mut last = self.intervals[0].clone();
             let mut last_ids: Vec<u32> = self.ids[0].clone();
-            let mut it = (1..(self.len()));
+            let mut it = 1..(self.len());
             loop {
                 let mut ii = match it.next() {
                     Some(ii) => ii,
@@ -290,7 +290,7 @@ impl NCList {
 
     pub fn find_closest_start_left(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
         let first = self.intervals.upper_bound_by_key(&pos, |entry| entry.start);
-        if (first == 0) {
+        if first == 0 {
             return None;
         }
         let prev = first - 1;
@@ -302,7 +302,7 @@ impl NCList {
             .intervals
             .upper_bound_by_key(&pos, |entry| entry.start + 1);
         // since this the first element strictly greater, we have to do -1
-        if (first == self.len()) {
+        if first == self.len() {
             return None;
         }
         return Some((self.intervals[first].clone(), self.ids[first].clone()));
@@ -346,11 +346,20 @@ impl NCList {
                 paired
                     .chunks(2)
                     .filter(|se| se[0] != se[1])
-                    .map(|(se)| se[0]..se[1]),
+                    .map(|se| se[0]..se[1]),
             );
             new_ids.extend((0..new_intervals.len()).map(|x| vec![x as u32]));
         }
         NCList::new_presorted(new_intervals, new_ids)
+    }
+
+    pub fn union(&self, others: Vec<&NCList>) -> NCList {
+        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+        new_intervals.extend_from_slice(&self.intervals);
+        for o in others {
+            new_intervals.extend_from_slice(&o.intervals);
+        }
+        NCList::new(&new_intervals[..])
     }
 
     fn _highest_end(&self) -> Option<u32> {
@@ -765,6 +774,28 @@ mod tests {
         let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
+    }
+
+    #[test]
+    fn test_union() {
+        let mut n = NCList::new(&vec![]).union(vec![&NCList::new(&vec![0..100])]);
+        assert_eq!(n.intervals, vec![0..100]);
+
+        let mut n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100])]);
+        assert_eq!(n.intervals, vec![0..100, 0..10]);
+
+        let mut n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100, 200..300])]);
+        assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
+        assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
+
+        let mut n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![])]);
+        assert_eq!(n.intervals, vec![0..10]);
+        let mut n = NCList::new(&vec![0..10]).union(vec![
+            &NCList::new(&vec![0..100]),
+            &NCList::new(&vec![200..300]),
+        ]);
+        assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
+        assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
     }
 
 }
