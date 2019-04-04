@@ -14,15 +14,15 @@ We can
 - [ ] merge internally overlapping by intersecting them? what does than even mean for
   nested intervals?
 - [x] merge internally overlapping by dropping them -> merge_drop
-- [ ] find the closest interval to a point
+- [ ] find the closest interval to a point - //needs more definition.
 - [x] find the interval with the closest start to the left of a point -> find_closest_start_left
 - [x] find the interval with the closest start to the right of a point -> find_closest_start_right
-- [ ] find the interval with the closest end to the left of a point
-- [ ] find the interval with the closest end to the right of a point
+- [ ] find the interval with the closest end to the left of a point //gonna be expensive
+- [ ] find the interval with the closest end to the right of a point //gonna be expensive
 - [x] calculate the units covered by the intervals -> covered_units() 
-- [x] find the mean size of the intervals
-- [x] build the union of n interval sets
-- [ ] substract two interval sets 
+- [x] find the mean size of the intervals -> mean_interval_size()
+- [x] build the union of n interval sets -> union()
+- [x] substract two interval sets  -> substract() (should this be named difference?)
 - [ ] keep only those overlapping with n other sets
 - [ ] remove those overlapping with more than n other sets
 - [x] invert an interval set (given outer borders)

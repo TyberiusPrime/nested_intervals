@@ -154,7 +154,7 @@ impl NCList {
         }
     }
 
-    pub fn has_overlap(&mut self, query: Range<u32>) -> bool {
+    pub fn has_overlap(&mut self, query: &Range<u32>) -> bool {
         if query.start > query.end {
             panic!("invalid interval end < start");
         }
@@ -361,7 +361,11 @@ impl NCList {
         }
         NCList::new(&new_intervals[..])
     }
-
+    pub fn substract(&self, other: &mut NCList) -> NCList {
+        let mut keep = self.intervals.iter().enumerate().map(|(ii, iv)| !other.has_overlap(iv)).collect();
+        return self.new_filtered(&keep);
+    }
+    
     fn _highest_end(&self) -> Option<u32> {
         match (&self.root) {
             // if we have a nclist we can just look at those intervals.
@@ -434,35 +438,35 @@ mod tests {
     fn test_has_overlap() {
         let r = vec![0..5, 10..15];
         let mut n = NCList::new(&r);
-        assert!(n.has_overlap(3..4));
-        assert!(n.has_overlap(5..20));
-        assert!(!n.has_overlap(6..10));
-        assert!(!n.has_overlap(100..110));
+        assert!(n.has_overlap(&(3..4)));
+        assert!(n.has_overlap(&(5..20)));
+        assert!(!n.has_overlap(&(6..10)));
+        assert!(!n.has_overlap(&(100..110)));
 
         let r2 = vec![0..15, 0..6];
         let mut n = NCList::new(&r2);
-        assert!(n.has_overlap(3..4));
-        assert!(n.has_overlap(5..20));
-        assert!(n.has_overlap(6..10));
-        assert!(!n.has_overlap(20..30));
+        assert!(n.has_overlap(&(3..4)));
+        assert!(n.has_overlap(&(5..20)));
+        assert!(n.has_overlap(&(6..10)));
+        assert!(!n.has_overlap(&(20..30)));
 
         let r2 = vec![100..150, 30..40, 200..400];
         let mut n = NCList::new(&r2);
-        assert!(n.has_overlap(101..102));
-        assert!(n.has_overlap(149..150));
-        assert!(n.has_overlap(39..99));
-        assert!(n.has_overlap(29..99));
-        assert!(n.has_overlap(19..99));
-        assert!(!n.has_overlap(0..5));
-        assert!(!n.has_overlap(0..29));
-        assert!(!n.has_overlap(0..30));
-        assert!(n.has_overlap(0..31));
-        assert!(!n.has_overlap(40..41));
-        assert!(!n.has_overlap(40..99));
-        assert!(!n.has_overlap(40..100));
-        assert!(n.has_overlap(40..101));
-        assert!(n.has_overlap(399..400));
-        assert!(!n.has_overlap(400..4000));
+        assert!(n.has_overlap(&(101..102)));
+        assert!(n.has_overlap(&(149..150)));
+        assert!(n.has_overlap(&(39..99)));
+        assert!(n.has_overlap(&(29..99)));
+        assert!(n.has_overlap(&(19..99)));
+        assert!(!n.has_overlap(&(0..5)));
+        assert!(!n.has_overlap(&(0..29)));
+        assert!(!n.has_overlap(&(0..30)));
+        assert!(n.has_overlap(&(0..31)));
+        assert!(!n.has_overlap(&(40..41)));
+        assert!(!n.has_overlap(&(40..99)));
+        assert!(!n.has_overlap(&(40..100)));
+        assert!(n.has_overlap(&(40..101)));
+        assert!(n.has_overlap(&(399..400)));
+        assert!(!n.has_overlap(&(400..4000)));
     }
     #[test]
     fn test_iter() {
@@ -797,5 +801,27 @@ mod tests {
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
     }
+
+    #[test]
+    fn test_subsrtact() {
+        let mut n = NCList::new(&vec![]).substract(&mut NCList::new(&vec![0..100]));
+        assert!(n.intervals.is_empty());
+
+        let mut n = NCList::new(&vec![0..10]).substract(&mut NCList::new(&vec![0..100]));
+        assert!(n.intervals.is_empty());
+
+        let mut n = NCList::new(&vec![0..10, 100..150]).substract(&mut NCList::new(&vec![0..100]));
+        assert_eq!(n.intervals, vec![100..150]);
+
+        let mut n = NCList::new(&vec![0..10, 100..150, 150..300]).substract(&mut NCList::new(&vec![55..101]));
+        assert_eq!(n.intervals, vec![0..10, 150..300]);
+        assert_eq!(n.ids, vec![vec![0], vec![2]]);
+
+        let mut n = NCList::new(&vec![0..10, 5..6, 100..150, 150..300]).substract(&mut NCList::new(&vec![55..101]));
+        assert_eq!(n.intervals, vec![0..10, 5..6, 150..300]);
+        assert_eq!(n.ids, vec![vec![0], vec![1], vec![3]]);
+    }
+
+
 
 }
