@@ -1,5 +1,5 @@
 #![feature(nll)]
-use std::cmp::Ordering;
+use std::cmp::{max, min, Ordering};
 use std::ops::Range;
 use superslice::*;
 
@@ -323,6 +323,47 @@ impl NCList {
             total += iv.end - iv.start;
         }
         total as f64 / self.len() as f64
+    }
+
+    pub fn invert(&self, lower_bound: u32, upper_bound: u32) -> NCList {
+        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+        let mut new_ids: Vec<Vec<u32>> = Vec::new();
+
+        if self.is_empty() {
+            new_intervals.push(lower_bound..upper_bound);
+            new_ids.push(vec![0]);
+        } else {
+            let mut lower = min(lower_bound, self.intervals[0].start);
+            let mut upper = max(upper_bound, self._highest_end().unwrap());
+            let n = self.merge_hull();
+            let mut paired = vec![lower];
+            for iv in n.intervals {
+                paired.push(iv.start);
+                paired.push(iv.end);
+            }
+            paired.push(upper);
+            new_intervals.extend(
+                paired
+                    .chunks(2)
+                    .filter(|se| se[0] != se[1])
+                    .map(|(se)| se[0]..se[1]),
+            );
+            new_ids.extend((0..new_intervals.len()).map(|x| vec![x as u32]));
+        }
+        NCList::new_presorted(new_intervals, new_ids)
+    }
+
+    fn _highest_end(&self) -> Option<u32> {
+        match (&self.root) {
+            // if we have a nclist we can just look at those intervals.
+            Some(root) => root
+                .children
+                .iter()
+                .map(|entry| self.intervals[entry.no as usize].end)
+                .max(),
+            //and if we don't we have to brutforce, I believe, since our list is sorted by start
+            None => self.intervals.iter().map(|range| range.end).max(),
+        }
     }
 
     fn _tag_overlapping_recursion(
@@ -699,6 +740,31 @@ mod tests {
             n.mean_interval_size(),
             (((100 - 10) + (300 - 200) + (99 - 15) + (105 - 15)) as f64 / 4.0)
         );
+    }
+
+    #[test]
+    fn test_invert() {
+        let mut n = NCList::new(&vec![]).invert(0, 100);
+        assert!(n.intervals == vec![0..100,]);
+        assert!(n.ids == vec![vec![0]]);
+        let mut n = NCList::new(&vec![30..40]).invert(0, 100);
+        assert!(n.intervals == vec![0..30, 40..100,]);
+        assert!(n.ids == vec![vec![0], vec![1]]);
+        let mut n = NCList::new(&vec![30..40, 35..38]).invert(0, 100);
+        assert!(n.intervals == vec![0..30, 40..100,]);
+        assert!(n.ids == vec![vec![0], vec![1]]);
+        let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
+        assert!(n.intervals == vec![0..30, 50..100,]);
+        assert!(n.ids == vec![vec![0], vec![1]]);
+        let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
+        assert!(n.intervals == vec![50..100,]);
+        assert!(n.ids == vec![vec![0]]);
+        let mut n = NCList::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
+        assert!(n.intervals == vec![50..55]);
+        assert!(n.ids == vec![vec![0]]);
+        let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
+        assert!(n.intervals.is_empty());
+        assert!(n.ids.is_empty());
     }
 
 }

@@ -25,7 +25,7 @@ We can
 - [ ] substract two interval sets 
 - [ ] keep only those overlapping with n other sets
 - [ ] remove those overlapping with more than n other sets
-- [ ] invert an interval set (given outer borders)
+- [x] invert an interval set (given outer borders)
 - [ ] intersect to interval sets
 - [ ] split intervalsets into non-overlapping subsets
 - [ ]
