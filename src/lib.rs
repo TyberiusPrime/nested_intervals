@@ -36,8 +36,6 @@ pub struct NCListEntry {
     children: Vec<NCListEntry>,
 }
 
-type NCListResult = (Range<u32>, Vec<u32>);
-
 fn nclist_range_sort(a: &Range<u32>, b: &Range<u32>) -> Ordering {
     if a.start < b.start {
         return Ordering::Less;
@@ -233,7 +231,6 @@ impl NCList {
     }
 
     pub fn merge_hull(&self) -> NCList {
-        let mut keep = vec![false; self.len()];
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
         if !self.is_empty() {
@@ -275,6 +272,22 @@ impl NCList {
         NCList::new_presorted(new_intervals, new_ids)
     }
 
+    pub fn merge_drop(&mut self) -> NCList {
+        let mut keep = vec![true; self.len()];
+        let mut last_stop = 0;
+        self.ensure_nclist();
+        for ii in (0..self.len()) {
+            if self.intervals[ii].start < last_stop {
+                keep[ii] = false;
+                keep[ii - 1] = false;;
+            }
+            if self.intervals[ii].end > last_stop {
+                last_stop = self.intervals[ii].end;
+            }
+        }
+        self.new_filtered(&keep)
+    }
+
     fn _tag_overlapping_recursion(
         &self,
         node: &NCListEntry,
@@ -311,15 +324,6 @@ impl NCList {
     }
 }
 
-trait ToIntervalVec {
-    fn to_interval_vec(&self) -> Vec<Range<u32>>;
-}
-impl ToIntervalVec for Vec<NCListResult> {
-    fn to_interval_vec(&self) -> Vec<Range<u32>> {
-        self.iter().map(|(iv, _id)| iv.clone()).collect()
-    }
-}
-
 trait RangePlus<T> {
     fn overlaps(&self, other: &Range<T>) -> bool;
     fn is_to_the_rigth_of(&self, other: &Range<T>) -> bool;
@@ -337,7 +341,7 @@ impl RangePlus<u32> for Range<u32> {
 #[cfg(test)]
 #[allow(dead_code)]
 mod tests {
-    use crate::{NCList, NCListResult, ToIntervalVec};
+    use crate::NCList;
     use std::ops::Range;
     #[test]
     fn test_has_overlap() {
@@ -500,5 +504,69 @@ mod tests {
         assert!(!n.any_overlapping());
         assert!(n.intervals == vec![100..180, 200..201]);
         assert!(n.ids == vec![vec![0, 1, 2], vec![3]]);
+    }
+
+    #[test]
+    fn test_merge_drop() {
+        let n = NCList::new(&vec![]).merge_drop();
+        assert!(n.len() == 0);
+        assert!(!n.any_overlapping());
+
+        let n = NCList::new(&vec![100..150]).merge_drop();
+        assert!(n.len() == 1);
+        assert!(!n.any_overlapping());
+
+        let n = NCList::new(&vec![100..150, 120..180]).merge_drop();
+        assert!(n.len() == 0);
+        assert!(!n.any_overlapping());
+        assert!(n.intervals == vec![]);
+        assert!(n.ids == Vec::<Vec<u32>>::new());
+
+        let n = NCList::new(&vec![100..150, 120..180, 200..250]).merge_drop();
+        assert!(n.len() == 1);
+        assert!(!n.any_overlapping());
+        assert!(n.intervals == vec![200..250]);
+        assert!(n.ids == vec![vec![2]]);
+
+        let n = NCList::new(&vec![100..150, 120..180, 200..250, 106..110]).merge_drop();
+        assert!(n.len() == 1);
+        assert!(!n.any_overlapping());
+        assert!(n.intervals == vec![200..250]);
+        assert!(n.ids == vec![vec![3]]);
+
+        let n = NCList::new(&vec![100..150, 120..180, 200..250, 106..110, 80..105]).merge_drop();
+        assert!(n.len() == 1);
+        assert!(!n.any_overlapping());
+        assert!(n.intervals == vec![200..250]);
+        assert!(n.ids == vec![vec![4]]);
+
+        let n = NCList::new(&vec![
+            100..150,
+            120..180,
+            200..250,
+            106..110,
+            80..105,
+            30..40,
+        ])
+        .merge_drop();
+        assert!(n.len() == 2);
+        assert!(!n.any_overlapping());
+        assert!(n.intervals == vec![30..40, 200..250]);
+        assert!(n.ids == vec![vec![0], vec![5]]);
+
+        let n = NCList::new(&vec![
+            100..150,
+            120..180,
+            200..250,
+            106..110,
+            80..105,
+            30..40,
+            400..405,
+        ])
+        .merge_drop();
+        assert!(n.len() == 3);
+        assert!(!n.any_overlapping());
+        assert!(n.intervals == vec![30..40, 200..250, 400..405]);
+        assert!(n.ids == vec![vec![0], vec![5], vec![6]]);
     }
 }

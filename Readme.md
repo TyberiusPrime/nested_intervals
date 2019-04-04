@@ -11,8 +11,9 @@ We can
 - [x] remove duplicate intervals and complain about non-duplicate overlapping ->
   remove_duplictes & any_overlapping
 - [x] merge internally overlapping by joining them -> merge_hull
-- [ ] merge internally overlapping by intersecting them?
-- [ ] merge internally overlapping by dropping them
+- [ ] merge internally overlapping by intersecting them? what does than even mean for
+  nested intervals?
+- [x] merge internally overlapping by dropping them
 - [ ] find the closest interval to a point
 - [ ] find the closest interval to the left of a point
 - [ ] find the closest interval to the right of a point
