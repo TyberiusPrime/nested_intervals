@@ -288,6 +288,26 @@ impl NCList {
         self.new_filtered(&keep)
     }
 
+    pub fn find_closest_start_left(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
+        let first = self.intervals.upper_bound_by_key(&pos, |entry| entry.start);
+        if (first == 0) {
+            return None;
+        }
+        let prev = first - 1;
+        return Some((self.intervals[prev].clone(), self.ids[prev].clone()));
+    }
+
+    pub fn find_closest_start_right(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
+        let first = self
+            .intervals
+            .upper_bound_by_key(&pos, |entry| entry.start + 1);
+        // since this the first element strictly greater, we have to do -1
+        if (first == self.len()) {
+            return None;
+        }
+        return Some((self.intervals[first].clone(), self.ids[first].clone()));
+    }
+
     fn _tag_overlapping_recursion(
         &self,
         node: &NCListEntry,
@@ -568,5 +588,68 @@ mod tests {
         assert!(!n.any_overlapping());
         assert!(n.intervals == vec![30..40, 200..250, 400..405]);
         assert!(n.ids == vec![vec![0], vec![5], vec![6]]);
+    }
+
+    #[test]
+    fn test_find_closest_start_left() {
+        let mut n = NCList::new(&vec![
+            30..40,
+            80..105,
+            100..150,
+            106..110,
+            106..120,
+            107..125,
+            120..180,
+            200..250,
+            400..405,
+        ]);
+        //find the first range that has an end to the left of this
+        assert!(n.find_closest_start_left(29).is_none());
+        assert!(n.find_closest_start_left(100).unwrap() == (100..150, vec![2]));
+        assert!(n.find_closest_start_left(105).unwrap() == (100..150, vec![2]));
+        assert!(n.find_closest_start_left(106).unwrap() == (106..110, vec![4]));
+        assert!(n.find_closest_start_left(109).unwrap() == (107..125, vec![5]));
+        assert!(n.find_closest_start_left(110).unwrap() == (107..125, vec![5]));
+        assert!(n.find_closest_start_left(111).unwrap() == (107..125, vec![5]));
+        assert!(n.find_closest_start_left(120).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_left(121).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_left(125).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_left(127).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_left(121000).unwrap() == (400..405, vec![8]));
+        let mut n = NCList::new(&vec![]);
+        assert!(n.find_closest_start_left(29).is_none());
+    }
+
+    #[test]
+    fn test_find_closest_start_right() {
+        let mut n = NCList::new(&vec![
+            30..40,
+            80..105,
+            100..150,
+            106..110,
+            106..120,
+            107..125,
+            120..180,
+            200..250,
+            400..405,
+        ]);
+        //find the first range that has an end to the right of this
+        assert!(n.find_closest_start_right(10).unwrap() == (30..40, vec![0]));
+        assert!(n.find_closest_start_right(29).unwrap() == (30..40, vec![0]));
+        assert!(n.find_closest_start_right(30).unwrap() == (30..40, vec![0]));
+        assert!(n.find_closest_start_right(31).unwrap() == (80..105, vec![1]));
+        assert!(n.find_closest_start_right(99).unwrap() == (100..150, vec![2]));
+        assert!(n.find_closest_start_right(100).unwrap() == (100..150, vec![2]));
+        assert!(n.find_closest_start_right(101).unwrap() == (106..120, vec![3]));
+        assert!(n.find_closest_start_right(107).unwrap() == (107..125, vec![5]));
+        assert!(n.find_closest_start_right(110).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_right(111).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_right(120).unwrap() == (120..180, vec![6]));
+        assert!(n.find_closest_start_right(121).unwrap() == (200..250, vec![7]));
+        assert!(n.find_closest_start_right(125).unwrap() == (200..250, vec![7]));
+        assert!(n.find_closest_start_right(127).unwrap() == (200..250, vec![7]));
+        assert!(n.find_closest_start_right(121000).is_none());
+        let mut n = NCList::new(&vec![]);
+        assert!(n.find_closest_start_right(29).is_none());
     }
 }

@@ -15,8 +15,10 @@ We can
   nested intervals?
 - [x] merge internally overlapping by dropping them
 - [ ] find the closest interval to a point
-- [ ] find the closest interval to the left of a point
-- [ ] find the closest interval to the right of a point
+- [x] find the interval with the closest start to the left of a point
+- [x] find the interval with the closest start to the right of a point
+- [ ] find the interval with the closest end to the left of a point
+- [ ] find the interval with the closest end to the right of a point
 - [ ] calculate the units covered by the intervals
 - [ ] find the mean size of the intervals
 - [ ] build the union of n interval sets
