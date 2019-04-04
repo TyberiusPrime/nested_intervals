@@ -2,13 +2,14 @@ A library to deal with interval sets.
 
 We can
 - [x] build them
-- [x] check for overlap with a query range
-- [x] query for overlapping with a query range
-- [x] query for overlapping with a query set
-- [ ] query for non-overlapping with a query set
-- [ ] check for internally overlapping
-- [ ] remove duplicate intervals
-- [ ] remove duplicate intervals and complain about non-duplicate overlapping
+- [x] check for overlap with a query range -> has_overlap
+- [x] query for overlapping with a query range -> query_overlap
+- [x] query for overlapping with a query set -> query_overlap_multiple
+- [x] query for non-overlapping with a query set -> query_non_overlap
+- [x] check for internally overlapping -> any_overlapping
+- [x] remove duplicate intervals (start&stop!)-> remove_duplicates
+- [x] remove duplicate intervals and complain about non-duplicate overlapping ->
+  remove_duplictes & any_overlapping
 - [ ] merge internally overlapping by joining them
 - [ ] merge internally overlapping by intersecting them?
 - [ ] merge internally overlapping by dropping them

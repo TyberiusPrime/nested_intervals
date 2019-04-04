@@ -3,6 +3,27 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use superslice::*;
 
+
+trait FilterByBools<T>{
+    fn filter_by_bools(&self, keep: &Vec<bool>) -> Vec<T>; 
+}
+
+impl <T> FilterByBools<T> for Vec<T>
+where T: Clone
+{
+    fn filter_by_bools(&self, keep: &Vec<bool>) -> Vec<T> {
+        if self.len() != keep.len() {
+            panic!("v and keep had unequal length");
+        }
+        self.iter()
+        .enumerate()
+        .filter(|(idx, _value)| keep[*idx as usize])
+        .map(|(_idx, value)| value.clone())
+        .collect()
+    }
+}
+
+#[derive(Debug)]
 struct NCList {
     intervals: Vec<Range<u32>>,
     ids: Vec<u32>,
@@ -46,6 +67,24 @@ impl NCList {
         NCList {
             intervals: iv,
             ids: (0..count).map(|x| x as u32).collect(),
+            root: None,
+        }
+    }
+    pub fn new_with_ids(intervals: &[Range<u32>], ids: &[u32]) -> NCList {
+        for r in intervals {
+            if r.start >= r.end {
+                panic!("Negative interval");
+            }
+        }
+        if intervals.len() != ids.len() {
+            panic!("Intervals and ids had differing lengths");
+        }
+        let mut iv = intervals.to_vec();
+        iv.sort_unstable_by(nclist_range_sort);
+        let ids = ids.to_vec();
+        NCList {
+            intervals: iv,
+            ids: ids,
             root: None,
         }
     }
@@ -176,6 +215,25 @@ impl NCList {
             }
         }
         false
+    }
+
+    pub fn remove_duplicates(&self) -> NCList {
+        let mut keep = vec![false; self.len()];
+        keep[0] = true;
+        for (ix, (v1, v2)) in self
+            .intervals
+            .iter()
+            .skip(1)
+            .zip(self.intervals.iter())
+            .enumerate()
+        {
+            keep[ix + 1] = v1 != v2;
+        }
+        NCList {
+            intervals: self.intervals.filter_by_bools(&keep),
+            ids: self.ids.filter_by_bools(&keep),
+            root: None,
+        }
     }
 
     fn _query_overlapping(
@@ -369,5 +427,24 @@ mod tests {
         assert!(n.any_overlapping());
         let n = NCList::new(&vec![100..150, 150..210, 209..250]);
         assert!(n.any_overlapping());
+    }
+
+    #[test]
+    fn test_remove_duplicates() {
+        let n = NCList::new(&vec![100..150]).remove_duplicates();
+        assert!(!n.any_overlapping());
+        assert!(n.len() == 1);
+        let n = NCList::new(&vec![30..40, 30..40, 100..150]).remove_duplicates();
+        assert!(!n.any_overlapping());
+        assert!(n.len() == 2);
+        let n = NCList::new(&vec![30..40, 30..40, 35..150]).remove_duplicates();
+        assert!(n.len() == 2);
+        let n = NCList::new_with_ids(
+            &vec![30..40, 30..40, 35..150, 35..150, 36..38],
+            &[55,56,57,58,59]
+            ).remove_duplicates();
+        assert!(n.len() == 3);
+        dbg!(&n);
+        assert!(n.ids == vec![55,57,59]);
     }
 }
