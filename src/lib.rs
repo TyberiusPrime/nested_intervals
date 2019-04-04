@@ -122,7 +122,7 @@ impl NCList {
         loop {
             match it.peek() {
                 Some((_, next)) => {
-                    if (parent.no != -1) && (next.start > self.intervals[parent.no as usize].end) {
+                    if (parent.no != -1) && (next.end > self.intervals[parent.no as usize].end) {
                         return;
                     }
                     let (ii, r) = it.next().unwrap();
@@ -306,6 +306,23 @@ impl NCList {
             return None;
         }
         return Some((self.intervals[first].clone(), self.ids[first].clone()));
+    }
+
+    pub fn covered_units(&mut self) -> u32 {
+        let merged = self.merge_hull();
+        let mut total = 0;
+        for iv in merged.intervals.iter() {
+            total += iv.end - iv.start;
+        }
+        return total;
+    }
+
+    pub fn mean_interval_size(&self) -> f64 {
+        let mut total = 0;
+        for iv in self.intervals.iter() {
+            total += iv.end - iv.start;
+        }
+        total as f64 / self.len() as f64
     }
 
     fn _tag_overlapping_recursion(
@@ -652,4 +669,36 @@ mod tests {
         let mut n = NCList::new(&vec![]);
         assert!(n.find_closest_start_right(29).is_none());
     }
+
+    #[test]
+    fn test_covered_units() {
+        let mut n = NCList::new(&vec![]);
+        assert_eq!(n.covered_units(), 0);
+        let mut n = NCList::new(&vec![10..100]);
+        assert_eq!(n.covered_units(), 90);
+        let mut n = NCList::new(&vec![10..100, 200..300]);
+        assert_eq!(n.covered_units(), 90 + 100);
+        let mut n = NCList::new(&vec![10..100, 200..300, 15..99]);
+        assert_eq!(n.covered_units(), 90 + 100);
+        let mut n = NCList::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        assert_eq!(n.covered_units(), 90 + 100 + 5);
+    }
+
+    #[test]
+    fn test_mean_interval_size() {
+        let mut n = NCList::new(&vec![]);
+        assert!(n.mean_interval_size().is_nan());
+        let mut n = NCList::new(&vec![10..100]);
+        assert_eq!(n.mean_interval_size(), 90.);
+        let mut n = NCList::new(&vec![10..100, 200..300]);
+        assert_eq!(n.mean_interval_size(), (90 + 100) as f64 / 2.0);
+        let mut n = NCList::new(&vec![10..100, 200..300, 15..99]);
+        assert_eq!(n.mean_interval_size(), (90 + 100 + (99 - 15)) as f64 / 3.0);
+        let mut n = NCList::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        assert_eq!(
+            n.mean_interval_size(),
+            (((100 - 10) + (300 - 200) + (99 - 15) + (105 - 15)) as f64 / 4.0)
+        );
+    }
+
 }
