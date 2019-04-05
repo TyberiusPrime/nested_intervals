@@ -457,7 +457,7 @@ impl NCList {
     fn _count_overlapping(&mut self, others: &[&NCList]) -> Vec<u32> {
         let mut counts: Vec<u32> = vec![0; self.len()];
         for o in others {
-            let mut keep = self._tag_overlapping(&o.intervals);
+            let keep = self._tag_overlapping(&o.intervals);
             for (ii, value) in keep.iter().enumerate() {
                 if *value {
                     counts[ii] += 1;
@@ -547,14 +547,14 @@ mod tests {
         let c = n.query_overlapping(0..5);
         assert!(c.is_empty());
         let c = n.query_overlapping(0..31);
-        assert!(c.intervals == vec![30..40]);
+        assert_eq!(c.intervals , vec![30..40]);
         let c = n.query_overlapping(200..250);
-        assert!(c.intervals == vec![200..400]);
+        assert_eq!(c.intervals , vec![200..400]);
         let c = n.query_overlapping(200..251);
-        assert!(c.intervals == vec![200..400, 250..300]);
+        assert_eq!(c.intervals , vec![200..400, 250..300]);
         let c = n.query_overlapping(0..1000);
         dbg!(&c);
-        assert!(c.intervals == vec![30..40, 100..150, 200..400, 250..300]);
+        assert_eq!(c.intervals , vec![30..40, 100..150, 200..400, 250..300]);
         let c = n.query_overlapping(401..1000);
         assert!(c.is_empty());
     }
@@ -562,28 +562,28 @@ mod tests {
     fn test_query_multiple() {
         let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
         let c = n.filter_to_overlapping(NCList::new(&vec![0..5, 0..105]));
-        assert!(c.intervals == vec![30..40, 100..150]);
+        assert_eq!(c.intervals , vec![30..40, 100..150]);
         let c = n.filter_to_overlapping(NCList::new(&vec![500..600, 550..700]));
         assert!(c.is_empty());
         let c = n.filter_to_overlapping(NCList::new(&vec![45..230]));
-        assert!(c.intervals == vec![100..150, 200..400]);
+        assert_eq!(c.intervals , vec![100..150, 200..400]);
         let c = n.filter_to_overlapping(NCList::new(&vec![45..101, 101..230]));
-        assert!(c.intervals == vec![100..150, 200..400]);
+        assert_eq!(c.intervals , vec![100..150, 200..400]);
     }
 
     #[test]
     fn test_query_multiple_non_overlapping() {
         let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
         let c = n.filter_to_non_overlapping(&[0..5, 0..105]);
-        assert!(c.intervals == vec![200..400, 250..300]);
+        assert_eq!(c.intervals , vec![200..400, 250..300]);
         let c = n.filter_to_non_overlapping(&[500..600, 550..700]);
-        assert!(c.intervals == vec![30..40, 100..150, 200..400, 250..300]);
+        assert_eq!(c.intervals , vec![30..40, 100..150, 200..400, 250..300]);
         let c = n.filter_to_non_overlapping(&[0..600]);
         assert!(c.is_empty());
         let c = n.filter_to_non_overlapping(&[45..230]);
-        assert!(c.intervals == vec![30..40, 250..300]);
+        assert_eq!(c.intervals , vec![30..40, 250..300]);
         let c = n.filter_to_non_overlapping(&[45..101, 101..230]);
-        assert!(c.intervals == vec![30..40, 250..300]);
+        assert_eq!(c.intervals , vec![30..40, 250..300]);
     }
 
     #[test]
@@ -616,81 +616,81 @@ mod tests {
     fn test_remove_duplicates() {
         let n = NCList::new(&vec![100..150]).remove_duplicates();
         assert!(!n.any_overlapping());
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
 
         let n = NCList::new(&vec![30..40, 30..40, 100..150]).remove_duplicates();
         assert!(!n.any_overlapping());
-        assert!(n.len() == 2);
+        assert_eq!(n.len() , 2);
         let n = NCList::new(&vec![30..40, 30..40, 35..150]).remove_duplicates();
-        assert!(n.len() == 2);
+        assert_eq!(n.len() , 2);
         let n = NCList::new_with_ids(
             &vec![30..40, 30..40, 35..150, 35..150, 36..38],
             &[55, 56, 57, 58, 59],
         )
         .remove_duplicates();
-        assert!(n.len() == 3);
+        assert_eq!(n.len() , 3);
         dbg!(&n);
-        assert!(n.ids == vec![vec![55], vec![57], vec![59]]);
+        assert_eq!(n.ids , vec![vec![55], vec![57], vec![59]]);
     }
 
     #[test]
     fn test_merge_hull() {
         let n = NCList::new(&vec![100..150]).merge_hull();
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
         assert!(!n.any_overlapping());
 
         let n = NCList::new(&vec![100..150, 120..180]).merge_hull();
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![100..180]);
-        assert!(n.ids == vec![vec![0, 1]]);
+        assert_eq!(n.intervals , vec![100..180]);
+        assert_eq!(n.ids , vec![vec![0, 1]]);
 
         let n = NCList::new(&vec![100..150, 120..180, 110..115]).merge_hull();
         assert!(n.len() == 1);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![100..180]);
-        assert!(n.ids == vec![vec![0, 1, 2]]);
+        assert_eq!(n.intervals , vec![100..180]);
+        assert_eq!(n.ids , vec![vec![0, 1, 2]]);
 
         let n = NCList::new(&vec![100..150, 120..180, 110..115, 200..201]).merge_hull();
-        assert!(n.len() == 2);
+        assert_eq!(n.len() , 2);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![100..180, 200..201]);
-        assert!(n.ids == vec![vec![0, 1, 2], vec![3]]);
+        assert_eq!(n.intervals , vec![100..180, 200..201]);
+        assert_eq!(n.ids , vec![vec![0, 1, 2], vec![3]]);
     }
 
     #[test]
     fn test_merge_drop() {
         let n = NCList::new(&vec![]).merge_drop();
-        assert!(n.len() == 0);
+        assert_eq!(n.len() , 0);
         assert!(!n.any_overlapping());
 
         let n = NCList::new(&vec![100..150]).merge_drop();
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
         assert!(!n.any_overlapping());
 
         let n = NCList::new(&vec![100..150, 120..180]).merge_drop();
-        assert!(n.len() == 0);
+        assert_eq!(n.len() , 0);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![]);
-        assert!(n.ids == Vec::<Vec<u32>>::new());
+        assert_eq!(n.intervals , vec![]);
+        assert_eq!(n.ids , Vec::<Vec<u32>>::new());
 
         let n = NCList::new(&vec![100..150, 120..180, 200..250]).merge_drop();
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![200..250]);
-        assert!(n.ids == vec![vec![2]]);
+        assert_eq!(n.intervals , vec![200..250]);
+        assert_eq!(n.ids , vec![vec![2]]);
 
         let n = NCList::new(&vec![100..150, 120..180, 200..250, 106..110]).merge_drop();
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![200..250]);
-        assert!(n.ids == vec![vec![3]]);
+        assert_eq!(n.intervals , vec![200..250]);
+        assert_eq!(n.ids , vec![vec![3]]);
 
         let n = NCList::new(&vec![100..150, 120..180, 200..250, 106..110, 80..105]).merge_drop();
-        assert!(n.len() == 1);
+        assert_eq!(n.len() , 1);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![200..250]);
-        assert!(n.ids == vec![vec![4]]);
+        assert_eq!(n.intervals , vec![200..250]);
+        assert_eq!(n.ids , vec![vec![4]]);
 
         let n = NCList::new(&vec![
             100..150,
@@ -701,10 +701,10 @@ mod tests {
             30..40,
         ])
         .merge_drop();
-        assert!(n.len() == 2);
+        assert_eq!(n.len() , 2);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![30..40, 200..250]);
-        assert!(n.ids == vec![vec![0], vec![5]]);
+        assert_eq!(n.intervals , vec![30..40, 200..250]);
+        assert_eq!(n.ids , vec![vec![0], vec![5]]);
 
         let n = NCList::new(&vec![
             100..150,
@@ -716,10 +716,10 @@ mod tests {
             400..405,
         ])
         .merge_drop();
-        assert!(n.len() == 3);
+        assert_eq!(n.len() , 3);
         assert!(!n.any_overlapping());
-        assert!(n.intervals == vec![30..40, 200..250, 400..405]);
-        assert!(n.ids == vec![vec![0], vec![5], vec![6]]);
+        assert_eq!(n.intervals , vec![30..40, 200..250, 400..405]);
+        assert_eq!(n.ids , vec![vec![0], vec![5], vec![6]]);
     }
 
     #[test]
@@ -737,17 +737,17 @@ mod tests {
         ]);
         //find the first range that has an end to the left of this
         assert!(n.find_closest_start_left(29).is_none());
-        assert!(n.find_closest_start_left(100).unwrap() == (100..150, vec![2]));
-        assert!(n.find_closest_start_left(105).unwrap() == (100..150, vec![2]));
-        assert!(n.find_closest_start_left(106).unwrap() == (106..110, vec![4]));
-        assert!(n.find_closest_start_left(109).unwrap() == (107..125, vec![5]));
-        assert!(n.find_closest_start_left(110).unwrap() == (107..125, vec![5]));
-        assert!(n.find_closest_start_left(111).unwrap() == (107..125, vec![5]));
-        assert!(n.find_closest_start_left(120).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_left(121).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_left(125).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_left(127).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_left(121000).unwrap() == (400..405, vec![8]));
+        assert_eq!(n.find_closest_start_left(100).unwrap() , (100..150, vec![2]));
+        assert_eq!(n.find_closest_start_left(105).unwrap() , (100..150, vec![2]));
+        assert_eq!(n.find_closest_start_left(106).unwrap() , (106..110, vec![4]));
+        assert_eq!(n.find_closest_start_left(109).unwrap() , (107..125, vec![5]));
+        assert_eq!(n.find_closest_start_left(110).unwrap() , (107..125, vec![5]));
+        assert_eq!(n.find_closest_start_left(111).unwrap() , (107..125, vec![5]));
+        assert_eq!(n.find_closest_start_left(120).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_left(121).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_left(125).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_left(127).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_left(121000).unwrap() , (400..405, vec![8]));
         let mut n = NCList::new(&vec![]);
         assert!(n.find_closest_start_left(29).is_none());
     }
@@ -766,20 +766,20 @@ mod tests {
             400..405,
         ]);
         //find the first range that has an end to the right of this
-        assert!(n.find_closest_start_right(10).unwrap() == (30..40, vec![0]));
-        assert!(n.find_closest_start_right(29).unwrap() == (30..40, vec![0]));
-        assert!(n.find_closest_start_right(30).unwrap() == (30..40, vec![0]));
-        assert!(n.find_closest_start_right(31).unwrap() == (80..105, vec![1]));
-        assert!(n.find_closest_start_right(99).unwrap() == (100..150, vec![2]));
-        assert!(n.find_closest_start_right(100).unwrap() == (100..150, vec![2]));
-        assert!(n.find_closest_start_right(101).unwrap() == (106..120, vec![3]));
-        assert!(n.find_closest_start_right(107).unwrap() == (107..125, vec![5]));
-        assert!(n.find_closest_start_right(110).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_right(111).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_right(120).unwrap() == (120..180, vec![6]));
-        assert!(n.find_closest_start_right(121).unwrap() == (200..250, vec![7]));
-        assert!(n.find_closest_start_right(125).unwrap() == (200..250, vec![7]));
-        assert!(n.find_closest_start_right(127).unwrap() == (200..250, vec![7]));
+        assert_eq!(n.find_closest_start_right(10).unwrap() , (30..40, vec![0]));
+        assert_eq!(n.find_closest_start_right(29).unwrap() , (30..40, vec![0]));
+        assert_eq!(n.find_closest_start_right(30).unwrap() , (30..40, vec![0]));
+        assert_eq!(n.find_closest_start_right(31).unwrap() , (80..105, vec![1]));
+        assert_eq!(n.find_closest_start_right(99).unwrap() , (100..150, vec![2]));
+        assert_eq!(n.find_closest_start_right(100).unwrap() , (100..150, vec![2]));
+        assert_eq!(n.find_closest_start_right(101).unwrap() , (106..120, vec![3]));
+        assert_eq!(n.find_closest_start_right(107).unwrap() , (107..125, vec![5]));
+        assert_eq!(n.find_closest_start_right(110).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_right(111).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_right(120).unwrap() , (120..180, vec![6]));
+        assert_eq!(n.find_closest_start_right(121).unwrap() , (200..250, vec![7]));
+        assert_eq!(n.find_closest_start_right(125).unwrap() , (200..250, vec![7]));
+        assert_eq!(n.find_closest_start_right(127).unwrap() , (200..250, vec![7]));
         assert!(n.find_closest_start_right(121000).is_none());
         let mut n = NCList::new(&vec![]);
         assert!(n.find_closest_start_right(29).is_none());
@@ -819,23 +819,23 @@ mod tests {
     #[test]
     fn test_invert() {
         let n = NCList::new(&vec![]).invert(0, 100);
-        assert!(n.intervals == vec![0..100,]);
-        assert!(n.ids == vec![vec![0]]);
+        assert_eq!(n.intervals , vec![0..100,]);
+        assert_eq!(n.ids , vec![vec![0]]);
         let n = NCList::new(&vec![30..40]).invert(0, 100);
-        assert!(n.intervals == vec![0..30, 40..100,]);
-        assert!(n.ids == vec![vec![0], vec![1]]);
+        assert_eq!(n.intervals , vec![0..30, 40..100,]);
+        assert_eq!(n.ids , vec![vec![0], vec![1]]);
         let n = NCList::new(&vec![30..40, 35..38]).invert(0, 100);
-        assert!(n.intervals == vec![0..30, 40..100,]);
-        assert!(n.ids == vec![vec![0], vec![1]]);
+        assert_eq!(n.intervals , vec![0..30, 40..100,]);
+        assert_eq!(n.ids , vec![vec![0], vec![1]]);
         let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
-        assert!(n.intervals == vec![0..30, 50..100,]);
-        assert!(n.ids == vec![vec![0], vec![1]]);
+        assert_eq!(n.intervals , vec![0..30, 50..100,]);
+        assert_eq!(n.ids , vec![vec![0], vec![1]]);
         let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
-        assert!(n.intervals == vec![50..100,]);
-        assert!(n.ids == vec![vec![0]]);
+        assert_eq!(n.intervals , vec![50..100,]);
+        assert_eq!(n.ids , vec![vec![0]]);
         let n = NCList::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
-        assert!(n.intervals == vec![50..55]);
-        assert!(n.ids == vec![vec![0]]);
+        assert_eq!(n.intervals , vec![50..55]);
+        assert_eq!(n.ids , vec![vec![0]]);
         let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
@@ -889,7 +889,7 @@ mod tests {
     fn test_filter_overlapping_multiples() {
         let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
         let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 1);
-        assert!(c.intervals == vec![30..40, 100..150]);
+        assert_eq!(c.intervals , vec![30..40, 100..150]);
         let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 0);
         assert_eq!(c, n);
         let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 2);
