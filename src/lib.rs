@@ -24,7 +24,7 @@ where
 }
 
 #[derive(Debug)]
-struct NCList {
+pub struct NCList {
     intervals: Vec<Range<u32>>,
     ids: Vec<Vec<u32>>,
     root: Option<NCListEntry>,
@@ -181,28 +181,8 @@ impl NCList {
         self.intervals.iter().zip(self.ids.iter())
     }
 
-    pub fn filter_to_overlapping(&mut self, query: Range<u32>) -> NCList {
-        return self.filter_to_overlapping_multiple(&[query]);
-    }
-
-    pub fn filter_to_overlapping_multiple(&mut self, query: &[Range<u32>]) -> NCList {
-        //I'm not certain this is the fastest way to do this - but it does work
-        //depending on the number of queries, it might be faster
-        //to do it the other way around, or do full scan of all entries here
-        //(we have to visit them any how to check the keep tags)
-        let keep = self._tag_overlapping(query);
-        self.new_filtered(&keep)
-    }
-
-    pub fn filter_to_non_overlapping_multiple(&mut self, query: &[Range<u32>]) -> NCList {
-        //I'm not certain this is the fastest way to do this - but it does work
-        //depending on the number of queries, it might be faster
-        //to do it the other way around, or do full scan of all entries here
-        //(we have to visit them any how to check the keep tags)
-        let mut keep = self._tag_overlapping(query);
-        for b in keep.iter_mut() {
-            *b = !*b;
-        }
+    pub fn query_overlapping(&mut self, query: Range<u32>) -> NCList {
+        let keep = self._tag_overlapping(&[query]);
         self.new_filtered(&keep)
     }
 
@@ -276,7 +256,7 @@ impl NCList {
         let mut keep = vec![true; self.len()];
         let mut last_stop = 0;
         self.ensure_nclist();
-        for ii in (0..self.len()) {
+        for ii in 0..self.len() {
             if self.intervals[ii].start < last_stop {
                 keep[ii] = false;
                 keep[ii - 1] = false;;
@@ -333,8 +313,8 @@ impl NCList {
             new_intervals.push(lower_bound..upper_bound);
             new_ids.push(vec![0]);
         } else {
-            let mut lower = min(lower_bound, self.intervals[0].start);
-            let mut upper = max(upper_bound, self._highest_end().unwrap());
+            let lower = min(lower_bound, self.intervals[0].start);
+            let upper = max(upper_bound, self._highest_end().unwrap());
             let n = self.merge_hull();
             let mut paired = vec![lower];
             for iv in n.intervals {
@@ -353,6 +333,61 @@ impl NCList {
         NCList::new_presorted(new_intervals, new_ids)
     }
 
+    pub fn filter_to_overlapping(&mut self, other: NCList) -> NCList {
+        //I'm not certain this is the fastest way to do this - but it does work
+        //depending on the number of queries, it might be faster
+        //to do it the other way around, or do full scan of all entries here
+        //(we have to visit them any how to check the keep tags)
+        let keep = self._tag_overlapping(&other.intervals);
+        self.new_filtered(&keep)
+    }
+
+    pub fn filter_to_non_overlapping(&mut self, query: &[Range<u32>]) -> NCList {
+        //I'm not certain this is the fastest way to do this - but it does work
+        //depending on the number of queries, it might be faster
+        //to do it the other way around, or do full scan of all entries here
+        //(we have to visit them any how to check the keep tags)
+        let mut keep = self._tag_overlapping(query);
+        for b in keep.iter_mut() {
+            *b = !*b;
+        }
+        self.new_filtered(&keep)
+    }
+
+    pub fn filter_to_overlapping_k_others(&mut self, others: &[&NCList], min_k: u32) -> NCList {
+        //I'm not certain this is the fastest way to do this - but it does work
+        //depending on the number of queries, it might be faster
+        //to do it the other way around, or do full scan of all entries here
+        //(we have to visit them any how to check the keep tags)
+        //  let keep = self._tag_overlapping(query);
+        // self.new_filtered(&keep)
+   
+        let counts = self._count_overlapping(others);
+        let mut keep = vec![false; self.len()];
+        for (ii, value) in counts.iter().enumerate() {
+            if *value >= min_k {
+                keep[ii] = true;
+            }
+        }
+        self.new_filtered(&keep)
+    }
+    pub fn filter_to_non_overlapping_k_others(&mut self, others: &[&NCList], max_k: u32) -> NCList {
+        //I'm not certain this is the fastest way to do this - but it does work
+        //depending on the number of queries, it might be faster
+        //to do it the other way around, or do full scan of all entries here
+        //(we have to visit them any how to check the keep tags)
+        //  let keep = self._tag_overlapping(query);
+        // self.new_filtered(&keep)
+        let counts = self._count_overlapping(others);
+        let mut keep = vec![false; self.len()];
+        for (ii, value) in counts.iter().enumerate() {
+            if *value <= max_k {
+                keep[ii] = true;
+            }
+        }
+        self.new_filtered(&keep)
+    }
+
     pub fn union(&self, others: Vec<&NCList>) -> NCList {
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         new_intervals.extend_from_slice(&self.intervals);
@@ -362,12 +397,17 @@ impl NCList {
         NCList::new(&new_intervals[..])
     }
     pub fn substract(&self, other: &mut NCList) -> NCList {
-        let mut keep = self.intervals.iter().enumerate().map(|(ii, iv)| !other.has_overlap(iv)).collect();
+        let keep = self
+            .intervals
+            .iter()
+            .enumerate()
+            .map(|(_ii, iv)| !other.has_overlap(iv))
+            .collect();
         return self.new_filtered(&keep);
     }
-    
+
     fn _highest_end(&self) -> Option<u32> {
-        match (&self.root) {
+        match &self.root {
             // if we have a nclist we can just look at those intervals.
             Some(root) => root
                 .children
@@ -412,6 +452,26 @@ impl NCList {
             self._tag_overlapping_recursion(&self.root.as_ref().unwrap(), &q, &mut keep);
         }
         keep
+    }
+
+    fn _count_overlapping(&mut self, others: &[&NCList]) -> Vec<u32> {
+        let mut counts: Vec<u32> = vec![0; self.len()];
+        for o in others {
+            let mut keep = self._tag_overlapping(&o.intervals);
+            for (ii, value) in keep.iter().enumerate() {
+                if *value {
+                    counts[ii] += 1;
+                }
+            }
+        }
+        counts
+    }
+}
+
+impl Eq for NCList {}
+impl PartialEq for NCList {
+    fn eq(&self, other: &NCList) -> bool {
+        (self.intervals == other.intervals) && (self.ids == other.ids)
     }
 }
 
@@ -484,44 +544,45 @@ mod tests {
     #[test]
     fn test_query() {
         let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_overlapping(0..5);
+        let c = n.query_overlapping(0..5);
         assert!(c.is_empty());
-        let c = n.filter_to_overlapping(0..31);
+        let c = n.query_overlapping(0..31);
         assert!(c.intervals == vec![30..40]);
-        let c = n.filter_to_overlapping(200..250);
+        let c = n.query_overlapping(200..250);
         assert!(c.intervals == vec![200..400]);
-        let c = n.filter_to_overlapping(200..251);
+        let c = n.query_overlapping(200..251);
         assert!(c.intervals == vec![200..400, 250..300]);
-        let c = n.filter_to_overlapping(0..1000);
+        let c = n.query_overlapping(0..1000);
         dbg!(&c);
         assert!(c.intervals == vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_overlapping(401..1000);
+        let c = n.query_overlapping(401..1000);
         assert!(c.is_empty());
     }
     #[test]
     fn test_query_multiple() {
         let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_overlapping_multiple(&[0..5, 0..105]);
+        let c = n.filter_to_overlapping(NCList::new(&vec![0..5, 0..105]));
         assert!(c.intervals == vec![30..40, 100..150]);
-        let c = n.filter_to_overlapping_multiple(&[500..600, 550..700]);
+        let c = n.filter_to_overlapping(NCList::new(&vec![500..600, 550..700]));
         assert!(c.is_empty());
-        let c = n.filter_to_overlapping_multiple(&[45..230]);
+        let c = n.filter_to_overlapping(NCList::new(&vec![45..230]));
         assert!(c.intervals == vec![100..150, 200..400]);
-        let c = n.filter_to_overlapping_multiple(&[45..101, 101..230]);
+        let c = n.filter_to_overlapping(NCList::new(&vec![45..101, 101..230]));
         assert!(c.intervals == vec![100..150, 200..400]);
     }
+
     #[test]
     fn test_query_multiple_non_overlapping() {
         let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_multiple(&[0..5, 0..105]);
+        let c = n.filter_to_non_overlapping(&[0..5, 0..105]);
         assert!(c.intervals == vec![200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_multiple(&[500..600, 550..700]);
+        let c = n.filter_to_non_overlapping(&[500..600, 550..700]);
         assert!(c.intervals == vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_multiple(&[0..600]);
+        let c = n.filter_to_non_overlapping(&[0..600]);
         assert!(c.is_empty());
-        let c = n.filter_to_non_overlapping_multiple(&[45..230]);
+        let c = n.filter_to_non_overlapping(&[45..230]);
         assert!(c.intervals == vec![30..40, 250..300]);
-        let c = n.filter_to_non_overlapping_multiple(&[45..101, 101..230]);
+        let c = n.filter_to_non_overlapping(&[45..101, 101..230]);
         assert!(c.intervals == vec![30..40, 250..300]);
     }
 
@@ -740,15 +801,15 @@ mod tests {
 
     #[test]
     fn test_mean_interval_size() {
-        let mut n = NCList::new(&vec![]);
+        let n = NCList::new(&vec![]);
         assert!(n.mean_interval_size().is_nan());
-        let mut n = NCList::new(&vec![10..100]);
+        let n = NCList::new(&vec![10..100]);
         assert_eq!(n.mean_interval_size(), 90.);
-        let mut n = NCList::new(&vec![10..100, 200..300]);
+        let n = NCList::new(&vec![10..100, 200..300]);
         assert_eq!(n.mean_interval_size(), (90 + 100) as f64 / 2.0);
-        let mut n = NCList::new(&vec![10..100, 200..300, 15..99]);
+        let n = NCList::new(&vec![10..100, 200..300, 15..99]);
         assert_eq!(n.mean_interval_size(), (90 + 100 + (99 - 15)) as f64 / 3.0);
-        let mut n = NCList::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        let n = NCList::new(&vec![10..100, 200..300, 15..99, 15..105]);
         assert_eq!(
             n.mean_interval_size(),
             (((100 - 10) + (300 - 200) + (99 - 15) + (105 - 15)) as f64 / 4.0)
@@ -757,44 +818,44 @@ mod tests {
 
     #[test]
     fn test_invert() {
-        let mut n = NCList::new(&vec![]).invert(0, 100);
+        let n = NCList::new(&vec![]).invert(0, 100);
         assert!(n.intervals == vec![0..100,]);
         assert!(n.ids == vec![vec![0]]);
-        let mut n = NCList::new(&vec![30..40]).invert(0, 100);
+        let n = NCList::new(&vec![30..40]).invert(0, 100);
         assert!(n.intervals == vec![0..30, 40..100,]);
         assert!(n.ids == vec![vec![0], vec![1]]);
-        let mut n = NCList::new(&vec![30..40, 35..38]).invert(0, 100);
+        let n = NCList::new(&vec![30..40, 35..38]).invert(0, 100);
         assert!(n.intervals == vec![0..30, 40..100,]);
         assert!(n.ids == vec![vec![0], vec![1]]);
-        let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
+        let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
         assert!(n.intervals == vec![0..30, 50..100,]);
         assert!(n.ids == vec![vec![0], vec![1]]);
-        let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
+        let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
         assert!(n.intervals == vec![50..100,]);
         assert!(n.ids == vec![vec![0]]);
-        let mut n = NCList::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
+        let n = NCList::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
         assert!(n.intervals == vec![50..55]);
         assert!(n.ids == vec![vec![0]]);
-        let mut n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
+        let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
     }
 
     #[test]
     fn test_union() {
-        let mut n = NCList::new(&vec![]).union(vec![&NCList::new(&vec![0..100])]);
+        let n = NCList::new(&vec![]).union(vec![&NCList::new(&vec![0..100])]);
         assert_eq!(n.intervals, vec![0..100]);
 
-        let mut n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100])]);
+        let n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100])]);
         assert_eq!(n.intervals, vec![0..100, 0..10]);
 
-        let mut n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100, 200..300])]);
+        let n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100, 200..300])]);
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
 
-        let mut n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![])]);
+        let n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![])]);
         assert_eq!(n.intervals, vec![0..10]);
-        let mut n = NCList::new(&vec![0..10]).union(vec![
+        let n = NCList::new(&vec![0..10]).union(vec![
             &NCList::new(&vec![0..100]),
             &NCList::new(&vec![200..300]),
         ]);
@@ -803,25 +864,69 @@ mod tests {
     }
 
     #[test]
-    fn test_subsrtact() {
-        let mut n = NCList::new(&vec![]).substract(&mut NCList::new(&vec![0..100]));
+    fn test_substract() {
+        let n = NCList::new(&vec![]).substract(&mut NCList::new(&vec![0..100]));
         assert!(n.intervals.is_empty());
 
-        let mut n = NCList::new(&vec![0..10]).substract(&mut NCList::new(&vec![0..100]));
+        let n = NCList::new(&vec![0..10]).substract(&mut NCList::new(&vec![0..100]));
         assert!(n.intervals.is_empty());
 
-        let mut n = NCList::new(&vec![0..10, 100..150]).substract(&mut NCList::new(&vec![0..100]));
+        let n = NCList::new(&vec![0..10, 100..150]).substract(&mut NCList::new(&vec![0..100]));
         assert_eq!(n.intervals, vec![100..150]);
 
-        let mut n = NCList::new(&vec![0..10, 100..150, 150..300]).substract(&mut NCList::new(&vec![55..101]));
+        let n = NCList::new(&vec![0..10, 100..150, 150..300])
+            .substract(&mut NCList::new(&vec![55..101]));
         assert_eq!(n.intervals, vec![0..10, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![2]]);
 
-        let mut n = NCList::new(&vec![0..10, 5..6, 100..150, 150..300]).substract(&mut NCList::new(&vec![55..101]));
+        let n = NCList::new(&vec![0..10, 5..6, 100..150, 150..300])
+            .substract(&mut NCList::new(&vec![55..101]));
         assert_eq!(n.intervals, vec![0..10, 5..6, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![3]]);
     }
 
+    #[test]
+    fn test_filter_overlapping_multiples() {
+        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 1);
+        assert!(c.intervals == vec![30..40, 100..150]);
+        let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 0);
+        assert_eq!(c, n);
+        let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 2);
+        assert!(c.is_empty());
 
+        let c = n.filter_to_overlapping_k_others(
+            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            2,
+        );
+        assert_eq!(c.intervals, vec![30..40,]);
+        let c = n.filter_to_overlapping_k_others(
+            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            1,
+        );
+        assert_eq!(c.intervals, vec![30..40, 100..150]);
+    }
+
+    #[test]
+    fn test_filter_non_overlapping_multiples() {
+        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let c = n.filter_to_non_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 1);
+        assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
+        let c = n.filter_to_non_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 0);
+        assert_eq!(c.intervals, vec![200..400, 250..300]);
+        let c = n.filter_to_non_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 2);
+        assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
+
+        let c = n.filter_to_non_overlapping_k_others(
+            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            2,
+        );
+        assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
+        let c = n.filter_to_non_overlapping_k_others(
+            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            1,
+        );
+        assert_eq!(c.intervals, vec![100..150, 200..400, 250..300]);
+    }
 
 }
