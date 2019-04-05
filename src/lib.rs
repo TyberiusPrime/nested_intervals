@@ -5,14 +5,14 @@ use std::ops::Range;
 use superslice::*;
 
 trait FilterByBools<T> {
-    fn filter_by_bools(&self, keep: &Vec<bool>) -> Vec<T>;
+    fn filter_by_bools(&self, keep: &[bool]) -> Vec<T>;
 }
 
 impl<T> FilterByBools<T> for Vec<T>
 where
     T: Clone,
 {
-    fn filter_by_bools(&self, keep: &Vec<bool>) -> Vec<T> {
+    fn filter_by_bools(&self, keep: &[bool]) -> Vec<T> {
         if self.len() != keep.len() {
             panic!("v and keep had unequal length");
         }
@@ -25,36 +25,58 @@ where
 }
 
 #[derive(Debug)]
-pub struct NCList {
+/// IntervalSet
+///
+/// A collection of Range<u32> and associated ids (u32).
+///
+/// If no ids are supplied, default ones will be provided.
+///
+/// Little assumption is placed on the intervals, they may
+/// overlap and nest. They must be start <= end though.
+///
+/// Our ranges are like Rust ranges, left closed, right open.
+pub struct IntervalSet {
     intervals: Vec<Range<u32>>,
     ids: Vec<Vec<u32>>,
-    root: Option<NCListEntry>,
+    root: Option<IntervalSetEntry>,
 }
 
 #[derive(Debug)]
-pub struct NCListEntry {
+/// IntervalSetEntry
+///
+/// Used internally to build the nested containment list
+/// Note that we do not reference the Intervals directly
+/// but hide them behind an index into IntervalSet.intervals (and .ids)
+/// thus avoiding all lifetime discussions but incuring a bit of
+/// runtime overhead. On the otherhand, we'd need two pointers
+/// to the .intervals and the .ids, or replace those by tuples
+///
+struct IntervalSetEntry {
     no: i32,
-    children: Vec<NCListEntry>,
+    children: Vec<IntervalSetEntry>,
 }
 
+/// nclists are based on sorting the intervals by (start, -end)
+#[allow(clippy::needless_return)]
 fn nclist_range_sort(a: &Range<u32>, b: &Range<u32>) -> Ordering {
     if a.start < b.start {
         return Ordering::Less;
     } else if a.start > b.start {
         return Ordering::Greater;
+    } else if a.end > b.end {
+        return Ordering::Less; // the magic trick to get contained intervals
+    } else if a.end < b.end {
+        return Ordering::Greater;
     } else {
-        if a.end > b.end {
-            return Ordering::Less; // the magic trick to get contained intervals
-        } else if a.end < b.end {
-            return Ordering::Greater;
-        } else {
-            return Ordering::Equal;
-        }
+        return Ordering::Equal;
     }
 }
 
-impl NCList {
-    pub fn new(intervals: &[Range<u32>]) -> NCList {
+impl IntervalSet {
+    /// Create an IntervalSet without supplying ids
+    ///
+    /// ids will be 0..n in the order of the *sorted* intervals
+    pub fn new(intervals: &[Range<u32>]) -> IntervalSet {
         for r in intervals {
             if r.start >= r.end {
                 panic!("Negative interval");
@@ -63,13 +85,17 @@ impl NCList {
         let mut iv = intervals.to_vec();
         iv.sort_unstable_by(nclist_range_sort);
         let count = iv.len();
-        NCList {
+        IntervalSet {
             intervals: iv,
             ids: (0..count).map(|x| vec![x as u32]).collect(),
             root: None,
         }
     }
-    pub fn new_with_ids(intervals: &[Range<u32>], ids: &[u32]) -> NCList {
+
+    /// Create an IntervalSet
+    ///
+    /// Ids may be non-unique
+    pub fn new_with_ids(intervals: &[Range<u32>], ids: &[u32]) -> IntervalSet {
         for r in intervals {
             if r.start >= r.end {
                 panic!("Negative interval");
@@ -81,14 +107,16 @@ impl NCList {
         let mut iv = intervals.to_vec();
         iv.sort_unstable_by(nclist_range_sort);
         let ids = ids.iter().map(|i| vec![*i]).collect();
-        NCList {
+        IntervalSet {
             intervals: iv,
-            ids: ids,
+            ids,
             root: None,
         }
     }
-    fn new_filtered(&self, keep: &Vec<bool>) -> NCList {
-        NCList {
+
+    /// filter this interval set by a bool vec, true are kept
+    fn new_filtered(&self, keep: &[bool]) -> IntervalSet {
+        IntervalSet {
             intervals: self.intervals.filter_by_bools(&keep),
             ids: self.ids.filter_by_bools(&keep),
             root: None,
@@ -97,25 +125,28 @@ impl NCList {
 
     /// used by the merge functions to bypass the sorting and checking
     /// on already sorted & checked intervals
-    fn new_presorted(intervals: Vec<Range<u32>>, ids: Vec<Vec<u32>>) -> NCList {
-        NCList {
-            intervals: intervals,
-            ids: ids,
+    fn new_presorted(intervals: Vec<Range<u32>>, ids: Vec<Vec<u32>>) -> IntervalSet {
+        IntervalSet {
+            intervals,
+            ids,
             root: None,
         }
     }
 
-    fn len(&self) -> usize {
+    /// How many intervals are there?
+    pub fn len(&self) -> usize {
         self.intervals.len()
     }
 
-    fn is_empty(&self) -> bool {
-        return self.len() == 0;
+    /// Is the number of intervals 0?
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
+    /// internal build-the-nested-containment-list-tree
     fn build_tree(
         &self,
-        parent: &mut NCListEntry,
+        parent: &mut IntervalSetEntry,
         it: &mut std::iter::Peekable<
             std::iter::Enumerate<std::slice::Iter<'_, std::ops::Range<u32>>>,
         >,
@@ -130,7 +161,7 @@ impl NCList {
                     if r.start > r.end {
                         panic!("invalid interval end < start");
                     }
-                    let entry = NCListEntry {
+                    let entry = IntervalSetEntry {
                         no: ii as i32,
                         children: Vec::new(),
                     };
@@ -144,9 +175,10 @@ impl NCList {
         }
     }
 
+    /// create the nclist if we don't have one yet
     fn ensure_nclist(&mut self) {
         if self.root.is_none() {
-            let mut root = NCListEntry {
+            let mut root = IntervalSetEntry {
                 no: -1,
                 children: Vec::new(),
             };
@@ -155,6 +187,7 @@ impl NCList {
         }
     }
 
+    /// Is there any interval overlapping with the query?
     pub fn has_overlap(&mut self, query: &Range<u32>) -> bool {
         if query.start > query.end {
             panic!("invalid interval end < start");
@@ -172,9 +205,10 @@ impl NCList {
             return false;
         }
         let next = &self.intervals[first];
-        return next.overlaps(&query);
+        next.overlaps(&query)
     }
 
+    /// create an iterator over ```(Range<u32>, &vec![id])``` tuples.
     pub fn iter(
         &self,
     ) -> std::iter::Zip<std::slice::Iter<'_, std::ops::Range<u32>>, std::slice::Iter<'_, Vec<u32>>>
@@ -182,11 +216,13 @@ impl NCList {
         self.intervals.iter().zip(self.ids.iter())
     }
 
-    pub fn query_overlapping(&mut self, query: Range<u32>) -> NCList {
+    /// retrieve a new IntervalSet with all intervals overlapping the query
+    pub fn query_overlapping(&mut self, query: Range<u32>) -> IntervalSet {
         let keep = self._tag_overlapping(&[query]);
         self.new_filtered(&keep)
     }
 
+    /// does this IntervalSet contain overlapping intervals?
     pub fn any_overlapping(&self) -> bool {
         for (next, last) in self.intervals.iter().skip(1).zip(self.intervals.iter()) {
             if last.overlaps(next) {
@@ -196,7 +232,21 @@ impl NCList {
         false
     }
 
-    pub fn remove_duplicates(&self) -> NCList {
+    /// does this IntervalSet contain nested intervals?
+    pub fn any_nested(&mut self) -> bool {
+        self.ensure_nclist();
+        for entry in self.root.as_ref().unwrap().children.iter() {
+            if !entry.children.is_empty() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// remove intervals that have the same coordinates
+    ///
+    /// Ids are **not** merged, the first set is being kept
+    pub fn remove_duplicates(&self) -> IntervalSet {
         let mut keep = vec![false; self.len()];
         keep[0] = true;
         for (ix, (v1, v2)) in self
@@ -211,20 +261,25 @@ impl NCList {
         self.new_filtered(&keep)
     }
 
-    pub fn merge_hull(&self) -> NCList {
+    /// remove empty intervals, ie. those with start == end
+    pub fn remove_empty(&self) -> IntervalSet {
+        let keep: Vec<bool> = self.intervals.iter().map(|r| r.start != r.end).collect();
+        self.new_filtered(&keep)
+    }
+
+    /// Merge overlapping & nested intervals to their outer bounds
+    ///
+    /// Examples:
+    /// - 0..15, 10..20 -> 0..20
+    /// - 0..20, 3..5 -> 0..20
+    pub fn merge_hull(&self) -> IntervalSet {
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
         if !self.is_empty() {
             let mut last = self.intervals[0].clone();
             let mut last_ids: Vec<u32> = self.ids[0].clone();
             let mut it = 1..(self.len());
-            loop {
-                let mut ii = match it.next() {
-                    Some(ii) => ii,
-                    None => {
-                        break;
-                    }
-                };
+            while let Some(mut ii) = it.next() {
                 let mut next = &self.intervals[ii];
                 while last.overlaps(next) {
                     if next.end > last.end {
@@ -250,10 +305,17 @@ impl NCList {
                 new_ids.push(last_ids);
             }
         }
-        NCList::new_presorted(new_intervals, new_ids)
+        IntervalSet::new_presorted(new_intervals, new_ids)
     }
 
-    pub fn merge_drop(&self) -> NCList {
+    /// Remove all intervals that are overlapping or nested
+    /// by simply dropping them.
+    ///
+    /// Examples:
+    /// - 0..20, 10..15, 20..35, 30..40, 40..50 -> 40..50
+    ///
+    /// Ids of the remaining intervals are unchanged
+    pub fn merge_drop(&self) -> IntervalSet {
         let mut keep = vec![true; self.len()];
         let mut last_stop = 0;
         for ii in 0..self.len() {
@@ -268,7 +330,18 @@ impl NCList {
         self.new_filtered(&keep)
     }
 
-    pub fn merge_split(&mut self) -> NCList {
+    /// Create fully disjoint intervals by splitting
+    /// the existing ones based on their overlap.
+    ///
+    /// Example:
+    /// - 0..20, 10..30 -> 0..10, 10..20, 20..30
+    ///
+    /// Ids are merged, ie. in the above example,
+    /// if the input ids are ```[[0], [1]]```, the output ids are
+    /// ```[[0], [0,1], [1]]```
+    ///
+    /// merge_split on an already disjoint set is a no-op
+    pub fn merge_split(&mut self) -> IntervalSet {
         dbg!(&self);
         #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
         enum SiteKind {
@@ -313,10 +386,12 @@ impl NCList {
                     || ((last.kind == SiteKind::End) && (next.kind == SiteKind::End))
                 {
                     println!("adding {}..{}", last.pos, next.pos);
-                    new_intervals.push(last.pos..next.pos);
-                    let mut ids_here: Vec<u32> = last_ids.keys().map(|x| *x).collect();
-                    ids_here.sort();
-                    new_ids.push(ids_here);
+                    if last.pos != next.pos {
+                        new_intervals.push(last.pos..next.pos);
+                        let mut ids_here: Vec<u32> = last_ids.keys().cloned().collect();
+                        ids_here.sort();
+                        new_ids.push(ids_here);
+                    }
                 }
                 match next.kind {
                     SiteKind::Start => {
@@ -336,28 +411,26 @@ impl NCList {
                 last = next;
             }
         }
-        NCList {
+        IntervalSet {
             intervals: new_intervals,
             ids: new_ids,
             root: None,
         }
-        .filter_empty()
     }
 
-    fn filter_empty(&self) -> NCList {
-        let keep = self.intervals.iter().map(|r| r.start != r.end).collect();
-        return self.new_filtered(&keep);
-    }
-
+    /// find the interval with the closest start to the left of pos
+    /// None if there are no intervals to the left of pos
     pub fn find_closest_start_left(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
         let first = self.intervals.upper_bound_by_key(&pos, |entry| entry.start);
         if first == 0 {
             return None;
         }
         let prev = first - 1;
-        return Some((self.intervals[prev].clone(), self.ids[prev].clone()));
+        Some((self.intervals[prev].clone(), self.ids[prev].clone()))
     }
 
+    /// find the interval with the closest start to the right of pos
+    /// None if there are no intervals to the right of pos
     pub fn find_closest_start_right(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
         let first = self
             .intervals
@@ -366,9 +439,13 @@ impl NCList {
         if first == self.len() {
             return None;
         }
-        return Some((self.intervals[first].clone(), self.ids[first].clone()));
+        Some((self.intervals[first].clone(), self.ids[first].clone()))
     }
 
+    /// find the interval with the closest start to pos
+    ///
+    /// None if the IntervalSet is empty
+    /// On a tie, the left interval wins.
     pub fn find_closest_start(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
         let left = self.find_closest_start_left(pos);
         let right = self.find_closest_start_left(pos);
@@ -377,8 +454,8 @@ impl NCList {
             (Some(l), None) => Some(l),
             (None, Some(r)) => Some(r),
             (Some(l), Some(r)) => {
-                let distance_left = (l.0.start as i64 - pos as i64).abs();
-                let distance_right = (r.0.start as i64 - pos as i64).abs();
+                let distance_left = (i64::from(l.0.start) - i64::from(pos)).abs();
+                let distance_right = (i64::from(r.0.start) - i64::from(pos)).abs();
                 if distance_left <= distance_right {
                     Some(l)
                 } else {
@@ -388,15 +465,18 @@ impl NCList {
         }
     }
 
+    /// how many units does this IntervalSet cover
     pub fn covered_units(&mut self) -> u32 {
         let merged = self.merge_hull();
         let mut total = 0;
         for iv in merged.intervals.iter() {
             total += iv.end - iv.start;
         }
-        return total;
+        total
     }
 
+    /// What is the mean size of the intervals
+    #[allow(clippy::cast_lossless)]
     pub fn mean_interval_size(&self) -> f64 {
         let mut total = 0;
         for iv in self.intervals.iter() {
@@ -405,7 +485,17 @@ impl NCList {
         total as f64 / self.len() as f64
     }
 
-    pub fn invert(&self, lower_bound: u32, upper_bound: u32) -> NCList {
+    /// Invert the intervals in this set
+    ///
+    /// Actual applied lower_bound is min(lower_bound, first_interval_start)
+    /// Actual applied upper_bound is max(upper_bound, last_interval_end)
+    ///
+    /// Examples
+    /// - invert([15..20], 0, 30) -> [0..15, 20..30]
+    /// - invert([15..20], 20, 30) -> [0..15, 20..30]
+    ///
+    /// Ids are lost
+    pub fn invert(&self, lower_bound: u32, upper_bound: u32) -> IntervalSet {
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
 
@@ -430,10 +520,11 @@ impl NCList {
             );
             new_ids.extend((0..new_intervals.len()).map(|x| vec![x as u32]));
         }
-        NCList::new_presorted(new_intervals, new_ids)
+        IntervalSet::new_presorted(new_intervals, new_ids)
     }
 
-    pub fn filter_to_overlapping(&mut self, other: NCList) -> NCList {
+    /// Filter to those intervals that have an overlap in other.
+    pub fn filter_to_overlapping(&mut self, other: &mut IntervalSet) -> IntervalSet {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -442,19 +533,27 @@ impl NCList {
         self.new_filtered(&keep)
     }
 
-    pub fn filter_to_non_overlapping(&mut self, query: &[Range<u32>]) -> NCList {
+    /// Filter to those intervals that have no overlap in other.
+    pub fn filter_to_non_overlapping(&mut self, other: &mut IntervalSet) -> IntervalSet {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
-        //(we have to visit them any how to check the keep tags)
-        let mut keep = self._tag_overlapping(query);
-        for b in keep.iter_mut() {
-            *b = !*b;
-        }
+
+        let keep: Vec<bool> = self
+            .intervals
+            .iter()
+            .enumerate()
+            .map(|(_ii, iv)| !other.has_overlap(iv))
+            .collect();
         self.new_filtered(&keep)
     }
 
-    pub fn filter_to_overlapping_k_others(&mut self, others: &[&NCList], min_k: u32) -> NCList {
+    /// Filter to those intervals that have an overlap in at least k others.
+    pub fn filter_to_overlapping_k_others(
+        &mut self,
+        others: &[&IntervalSet],
+        min_k: u32,
+    ) -> IntervalSet {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -471,7 +570,12 @@ impl NCList {
         }
         self.new_filtered(&keep)
     }
-    pub fn filter_to_non_overlapping_k_others(&mut self, others: &[&NCList], max_k: u32) -> NCList {
+    /// Filter to those intervals that have an overlap in no more than k others
+    pub fn filter_to_non_overlapping_k_others(
+        &mut self,
+        others: &[&IntervalSet],
+        max_k: u32,
+    ) -> IntervalSet {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -488,24 +592,19 @@ impl NCList {
         self.new_filtered(&keep)
     }
 
-    pub fn union(&self, others: Vec<&NCList>) -> NCList {
+    /// Build the union of two IntervalSets
+    ///
+    /// No merging is performed
+    pub fn union(&self, others: Vec<&IntervalSet>) -> IntervalSet {
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         new_intervals.extend_from_slice(&self.intervals);
         for o in others {
             new_intervals.extend_from_slice(&o.intervals);
         }
-        NCList::new(&new_intervals[..])
-    }
-    pub fn substract(&self, other: &mut NCList) -> NCList {
-        let keep = self
-            .intervals
-            .iter()
-            .enumerate()
-            .map(|(_ii, iv)| !other.has_overlap(iv))
-            .collect();
-        return self.new_filtered(&keep);
+        IntervalSet::new(&new_intervals[..])
     }
 
+    /// find the highest interval.end in our data set
     fn _highest_end(&self) -> Option<u32> {
         match &self.root {
             // if we have a nclist we can just look at those intervals.
@@ -521,7 +620,7 @@ impl NCList {
 
     fn _tag_overlapping_recursion(
         &self,
-        node: &NCListEntry,
+        node: &IntervalSetEntry,
         query: &Range<u32>,
         tags: &mut Vec<bool>,
     ) {
@@ -554,7 +653,7 @@ impl NCList {
         keep
     }
 
-    fn _count_overlapping(&mut self, others: &[&NCList]) -> Vec<u32> {
+    fn _count_overlapping(&mut self, others: &[&IntervalSet]) -> Vec<u32> {
         let mut counts: Vec<u32> = vec![0; self.len()];
         for o in others {
             let keep = self._tag_overlapping(&o.intervals);
@@ -568,50 +667,48 @@ impl NCList {
     }
 }
 
-impl Eq for NCList {}
-impl PartialEq for NCList {
-    fn eq(&self, other: &NCList) -> bool {
+impl Eq for IntervalSet {}
+impl PartialEq for IntervalSet {
+    fn eq(&self, other: &IntervalSet) -> bool {
         (self.intervals == other.intervals) && (self.ids == other.ids)
     }
 }
 
-trait RangePlus<T> {
+/// Extend Range functionality with some often used bool functions
+pub trait RangePlus<T> {
+    /// Does this interval overlap the other one?
     fn overlaps(&self, other: &Range<T>) -> bool;
-    fn is_to_the_rigth_of(&self, other: &Range<T>) -> bool;
 }
 
 impl RangePlus<u32> for Range<u32> {
     fn overlaps(&self, other: &Range<u32>) -> bool {
         (self.start < other.end && other.start < self.end)
     }
-    fn is_to_the_rigth_of(&self, other: &Range<u32>) -> bool {
-        self.end > other.start
-    }
 }
 
 #[cfg(test)]
 #[allow(dead_code)]
 mod tests {
-    use crate::NCList;
+    use crate::IntervalSet;
     use std::ops::Range;
     #[test]
     fn test_has_overlap() {
         let r = vec![0..5, 10..15];
-        let mut n = NCList::new(&r);
+        let mut n = IntervalSet::new(&r);
         assert!(n.has_overlap(&(3..4)));
         assert!(n.has_overlap(&(5..20)));
         assert!(!n.has_overlap(&(6..10)));
         assert!(!n.has_overlap(&(100..110)));
 
         let r2 = vec![0..15, 0..6];
-        let mut n = NCList::new(&r2);
+        let mut n = IntervalSet::new(&r2);
         assert!(n.has_overlap(&(3..4)));
         assert!(n.has_overlap(&(5..20)));
         assert!(n.has_overlap(&(6..10)));
         assert!(!n.has_overlap(&(20..30)));
 
         let r2 = vec![100..150, 30..40, 200..400];
-        let mut n = NCList::new(&r2);
+        let mut n = IntervalSet::new(&r2);
         assert!(n.has_overlap(&(101..102)));
         assert!(n.has_overlap(&(149..150)));
         assert!(n.has_overlap(&(39..99)));
@@ -630,7 +727,7 @@ mod tests {
     }
     #[test]
     fn test_iter() {
-        let n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
         let c: Vec<(&Range<u32>, &Vec<u32>)> = n.iter().collect();
         assert!(!c.is_empty());
         let c: Vec<Range<u32>> = c
@@ -643,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
         let c = n.query_overlapping(0..5);
         assert!(c.is_empty());
         let c = n.query_overlapping(0..31);
@@ -660,70 +757,80 @@ mod tests {
     }
     #[test]
     fn test_query_multiple() {
-        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_overlapping(NCList::new(&vec![0..5, 0..105]));
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![0..5, 0..105]));
         assert_eq!(c.intervals, vec![30..40, 100..150]);
-        let c = n.filter_to_overlapping(NCList::new(&vec![500..600, 550..700]));
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![500..600, 550..700]));
         assert!(c.is_empty());
-        let c = n.filter_to_overlapping(NCList::new(&vec![45..230]));
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![45..230]));
         assert_eq!(c.intervals, vec![100..150, 200..400]);
-        let c = n.filter_to_overlapping(NCList::new(&vec![45..101, 101..230]));
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![45..101, 101..230]));
         assert_eq!(c.intervals, vec![100..150, 200..400]);
     }
 
     #[test]
     fn test_query_multiple_non_overlapping() {
-        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&[0..5, 0..105]);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..5, 0..105]));
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&[500..600, 550..700]);
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![500..600, 550..700]));
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&[0..600]);
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..600]));
         assert!(c.is_empty());
-        let c = n.filter_to_non_overlapping(&[45..230]);
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![45..230]));
         assert_eq!(c.intervals, vec![30..40, 250..300]);
-        let c = n.filter_to_non_overlapping(&[45..101, 101..230]);
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![45..101, 101..230]));
         assert_eq!(c.intervals, vec![30..40, 250..300]);
     }
 
     #[test]
     fn test_any_overlapping() {
-        let n = NCList::new(&vec![100..150]);
+        let n = IntervalSet::new(&vec![100..150]);
         assert!(!n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 200..300]);
+        let n = IntervalSet::new(&vec![100..150, 200..300]);
         assert!(!n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 150..300]);
+        let n = IntervalSet::new(&vec![100..150, 150..300]);
         assert!(!n.any_overlapping());
-        let n = NCList::new(&vec![100..151, 150..300]);
+        let n = IntervalSet::new(&vec![100..151, 150..300]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..151, 105..110]);
+        let n = IntervalSet::new(&vec![100..151, 105..110]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..151, 105..110, 0..1000]);
+        let n = IntervalSet::new(&vec![100..151, 105..110, 0..1000]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 150..210, 0..1000]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 0..1000]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 150..210, 0..130]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 0..130]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 150..210, 150..250]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 150..250]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 150..210, 149..250]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 149..250]);
         assert!(n.any_overlapping());
-        let n = NCList::new(&vec![100..150, 150..210, 209..250]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 209..250]);
         assert!(n.any_overlapping());
     }
 
     #[test]
+    fn test_any_nested() {
+        assert!(!IntervalSet::new(&vec![]).any_nested());;
+        assert!(!IntervalSet::new(&vec![100..150]).any_nested());;
+        assert!(!IntervalSet::new(&vec![100..150, 150..300]).any_nested());;
+        assert!(!IntervalSet::new(&vec![100..151, 150..300]).any_nested());;
+        assert!(IntervalSet::new(&vec![100..151, 150..300, 100..130]).any_nested());;
+        assert!(IntervalSet::new(&vec![100..151, 150..300, 0..1000]).any_nested());;
+    }
+
+    #[test]
     fn test_remove_duplicates() {
-        let n = NCList::new(&vec![100..150]).remove_duplicates();
+        let n = IntervalSet::new(&vec![100..150]).remove_duplicates();
         assert!(!n.any_overlapping());
         assert_eq!(n.len(), 1);
 
-        let n = NCList::new(&vec![30..40, 30..40, 100..150]).remove_duplicates();
+        let n = IntervalSet::new(&vec![30..40, 30..40, 100..150]).remove_duplicates();
         assert!(!n.any_overlapping());
         assert_eq!(n.len(), 2);
-        let n = NCList::new(&vec![30..40, 30..40, 35..150]).remove_duplicates();
+        let n = IntervalSet::new(&vec![30..40, 30..40, 35..150]).remove_duplicates();
         assert_eq!(n.len(), 2);
-        let n = NCList::new_with_ids(
+        let n = IntervalSet::new_with_ids(
             &vec![30..40, 30..40, 35..150, 35..150, 36..38],
             &[55, 56, 57, 58, 59],
         )
@@ -735,23 +842,23 @@ mod tests {
 
     #[test]
     fn test_merge_hull() {
-        let n = NCList::new(&vec![100..150]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150]).merge_hull();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
 
-        let n = NCList::new(&vec![100..150, 120..180]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150, 120..180]).merge_hull();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![100..180]);
         assert_eq!(n.ids, vec![vec![0, 1]]);
 
-        let n = NCList::new(&vec![100..150, 120..180, 110..115]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115]).merge_hull();
         assert!(n.len() == 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![100..180]);
         assert_eq!(n.ids, vec![vec![0, 1, 2]]);
 
-        let n = NCList::new(&vec![100..150, 120..180, 110..115, 200..201]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115, 200..201]).merge_hull();
         assert_eq!(n.len(), 2);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![100..180, 200..201]);
@@ -760,39 +867,40 @@ mod tests {
 
     #[test]
     fn test_merge_drop() {
-        let n = NCList::new(&vec![]).merge_drop();
+        let n = IntervalSet::new(&vec![]).merge_drop();
         assert_eq!(n.len(), 0);
         assert!(!n.any_overlapping());
 
-        let n = NCList::new(&vec![100..150]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150]).merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
 
-        let n = NCList::new(&vec![100..150, 120..180]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180]).merge_drop();
         assert_eq!(n.len(), 0);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![]);
         assert_eq!(n.ids, Vec::<Vec<u32>>::new());
 
-        let n = NCList::new(&vec![100..150, 120..180, 200..250]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250]).merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![200..250]);
         assert_eq!(n.ids, vec![vec![2]]);
 
-        let n = NCList::new(&vec![100..150, 120..180, 200..250, 106..110]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250, 106..110]).merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![200..250]);
         assert_eq!(n.ids, vec![vec![3]]);
 
-        let n = NCList::new(&vec![100..150, 120..180, 200..250, 106..110, 80..105]).merge_drop();
+        let n =
+            IntervalSet::new(&vec![100..150, 120..180, 200..250, 106..110, 80..105]).merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![200..250]);
         assert_eq!(n.ids, vec![vec![4]]);
 
-        let n = NCList::new(&vec![
+        let n = IntervalSet::new(&vec![
             100..150,
             120..180,
             200..250,
@@ -806,7 +914,7 @@ mod tests {
         assert_eq!(n.intervals, vec![30..40, 200..250]);
         assert_eq!(n.ids, vec![vec![0], vec![5]]);
 
-        let n = NCList::new(&vec![
+        let n = IntervalSet::new(&vec![
             100..150,
             120..180,
             200..250,
@@ -820,11 +928,13 @@ mod tests {
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![30..40, 200..250, 400..405]);
         assert_eq!(n.ids, vec![vec![0], vec![5], vec![6]]);
+        let n = IntervalSet::new(&vec![0..20, 10..15, 20..35, 30..40, 40..50]).merge_drop();
+        assert_eq!(n.intervals, vec![40..50]);
     }
 
     #[test]
     fn test_find_closest_start_left() {
-        let mut n = NCList::new(&vec![
+        let mut n = IntervalSet::new(&vec![
             30..40,
             80..105,
             100..150,
@@ -851,13 +961,13 @@ mod tests {
             n.find_closest_start_left(121000).unwrap(),
             (400..405, vec![8])
         );
-        let mut n = NCList::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]);
         assert!(n.find_closest_start_left(29).is_none());
     }
 
     #[test]
     fn test_find_closest_start_right() {
-        let mut n = NCList::new(&vec![
+        let mut n = IntervalSet::new(&vec![
             30..40,
             80..105,
             100..150,
@@ -911,13 +1021,13 @@ mod tests {
             (200..250, vec![7])
         );
         assert!(n.find_closest_start_right(121000).is_none());
-        let mut n = NCList::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]);
         assert!(n.find_closest_start_right(29).is_none());
     }
     fn test_find_closest_start() {
-        let mut n = NCList::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]);
         assert!(n.find_closest_start(100).is_none());
-        let mut n = NCList::new(&vec![100..110, 200..300]);
+        let mut n = IntervalSet::new(&vec![100..110, 200..300]);
         assert_eq!(n.find_closest_start(0).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(100).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(149).unwrap(), (100..110, vec![0]));
@@ -929,29 +1039,29 @@ mod tests {
 
     #[test]
     fn test_covered_units() {
-        let mut n = NCList::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]);
         assert_eq!(n.covered_units(), 0);
-        let mut n = NCList::new(&vec![10..100]);
+        let mut n = IntervalSet::new(&vec![10..100]);
         assert_eq!(n.covered_units(), 90);
-        let mut n = NCList::new(&vec![10..100, 200..300]);
+        let mut n = IntervalSet::new(&vec![10..100, 200..300]);
         assert_eq!(n.covered_units(), 90 + 100);
-        let mut n = NCList::new(&vec![10..100, 200..300, 15..99]);
+        let mut n = IntervalSet::new(&vec![10..100, 200..300, 15..99]);
         assert_eq!(n.covered_units(), 90 + 100);
-        let mut n = NCList::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        let mut n = IntervalSet::new(&vec![10..100, 200..300, 15..99, 15..105]);
         assert_eq!(n.covered_units(), 90 + 100 + 5);
     }
 
     #[test]
     fn test_mean_interval_size() {
-        let n = NCList::new(&vec![]);
+        let n = IntervalSet::new(&vec![]);
         assert!(n.mean_interval_size().is_nan());
-        let n = NCList::new(&vec![10..100]);
+        let n = IntervalSet::new(&vec![10..100]);
         assert_eq!(n.mean_interval_size(), 90.);
-        let n = NCList::new(&vec![10..100, 200..300]);
+        let n = IntervalSet::new(&vec![10..100, 200..300]);
         assert_eq!(n.mean_interval_size(), (90 + 100) as f64 / 2.0);
-        let n = NCList::new(&vec![10..100, 200..300, 15..99]);
+        let n = IntervalSet::new(&vec![10..100, 200..300, 15..99]);
         assert_eq!(n.mean_interval_size(), (90 + 100 + (99 - 15)) as f64 / 3.0);
-        let n = NCList::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        let n = IntervalSet::new(&vec![10..100, 200..300, 15..99, 15..105]);
         assert_eq!(
             n.mean_interval_size(),
             (((100 - 10) + (300 - 200) + (99 - 15) + (105 - 15)) as f64 / 4.0)
@@ -960,46 +1070,47 @@ mod tests {
 
     #[test]
     fn test_invert() {
-        let n = NCList::new(&vec![]).invert(0, 100);
+        let n = IntervalSet::new(&vec![]).invert(0, 100);
         assert_eq!(n.intervals, vec![0..100,]);
         assert_eq!(n.ids, vec![vec![0]]);
-        let n = NCList::new(&vec![30..40]).invert(0, 100);
+        let n = IntervalSet::new(&vec![30..40]).invert(0, 100);
         assert_eq!(n.intervals, vec![0..30, 40..100,]);
         assert_eq!(n.ids, vec![vec![0], vec![1]]);
-        let n = NCList::new(&vec![30..40, 35..38]).invert(0, 100);
+        let n = IntervalSet::new(&vec![30..40, 35..38]).invert(0, 100);
         assert_eq!(n.intervals, vec![0..30, 40..100,]);
         assert_eq!(n.ids, vec![vec![0], vec![1]]);
-        let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
         assert_eq!(n.intervals, vec![0..30, 50..100,]);
         assert_eq!(n.ids, vec![vec![0], vec![1]]);
-        let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
         assert_eq!(n.intervals, vec![50..100,]);
         assert_eq!(n.ids, vec![vec![0]]);
-        let n = NCList::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
         assert_eq!(n.intervals, vec![50..55]);
         assert_eq!(n.ids, vec![vec![0]]);
-        let n = NCList::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
     }
 
     #[test]
     fn test_union() {
-        let n = NCList::new(&vec![]).union(vec![&NCList::new(&vec![0..100])]);
+        let n = IntervalSet::new(&vec![]).union(vec![&IntervalSet::new(&vec![0..100])]);
         assert_eq!(n.intervals, vec![0..100]);
 
-        let n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100])]);
+        let n = IntervalSet::new(&vec![0..10]).union(vec![&IntervalSet::new(&vec![0..100])]);
         assert_eq!(n.intervals, vec![0..100, 0..10]);
 
-        let n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![0..100, 200..300])]);
+        let n =
+            IntervalSet::new(&vec![0..10]).union(vec![&IntervalSet::new(&vec![0..100, 200..300])]);
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
 
-        let n = NCList::new(&vec![0..10]).union(vec![&NCList::new(&vec![])]);
+        let n = IntervalSet::new(&vec![0..10]).union(vec![&IntervalSet::new(&vec![])]);
         assert_eq!(n.intervals, vec![0..10]);
-        let n = NCList::new(&vec![0..10]).union(vec![
-            &NCList::new(&vec![0..100]),
-            &NCList::new(&vec![200..300]),
+        let n = IntervalSet::new(&vec![0..10]).union(vec![
+            &IntervalSet::new(&vec![0..100]),
+            &IntervalSet::new(&vec![200..300]),
         ]);
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
@@ -1007,43 +1118,52 @@ mod tests {
 
     #[test]
     fn test_substract() {
-        let n = NCList::new(&vec![]).substract(&mut NCList::new(&vec![0..100]));
+        let n = IntervalSet::new(&vec![])
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]));
         assert!(n.intervals.is_empty());
 
-        let n = NCList::new(&vec![0..10]).substract(&mut NCList::new(&vec![0..100]));
+        let n = IntervalSet::new(&vec![0..10])
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]));
         assert!(n.intervals.is_empty());
 
-        let n = NCList::new(&vec![0..10, 100..150]).substract(&mut NCList::new(&vec![0..100]));
+        let n = IntervalSet::new(&vec![0..10, 100..150])
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]));
         assert_eq!(n.intervals, vec![100..150]);
 
-        let n = NCList::new(&vec![0..10, 100..150, 150..300])
-            .substract(&mut NCList::new(&vec![55..101]));
+        let n = IntervalSet::new(&vec![0..10, 100..150, 150..300])
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![55..101]));
         assert_eq!(n.intervals, vec![0..10, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![2]]);
 
-        let n = NCList::new(&vec![0..10, 5..6, 100..150, 150..300])
-            .substract(&mut NCList::new(&vec![55..101]));
+        let n = IntervalSet::new(&vec![0..10, 5..6, 100..150, 150..300])
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![55..101]));
         assert_eq!(n.intervals, vec![0..10, 5..6, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![3]]);
     }
 
     #[test]
     fn test_filter_overlapping_multiples() {
-        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 1);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let c = n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 1);
         assert_eq!(c.intervals, vec![30..40, 100..150]);
-        let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 0);
+        let c = n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 0);
         assert_eq!(c, n);
-        let c = n.filter_to_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 2);
+        let c = n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 2);
         assert!(c.is_empty());
 
         let c = n.filter_to_overlapping_k_others(
-            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            &[
+                &IntervalSet::new(&vec![0..35]),
+                &IntervalSet::new(&vec![0..160]),
+            ],
             2,
         );
         assert_eq!(c.intervals, vec![30..40,]);
         let c = n.filter_to_overlapping_k_others(
-            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            &[
+                &IntervalSet::new(&vec![0..35]),
+                &IntervalSet::new(&vec![0..160]),
+            ],
             1,
         );
         assert_eq!(c.intervals, vec![30..40, 100..150]);
@@ -1051,21 +1171,27 @@ mod tests {
 
     #[test]
     fn test_filter_non_overlapping_multiples() {
-        let mut n = NCList::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 1);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let c = n.filter_to_non_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 1);
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 0);
+        let c = n.filter_to_non_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 0);
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_k_others(&[&NCList::new(&vec![0..5, 0..105])], 2);
+        let c = n.filter_to_non_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 2);
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
 
         let c = n.filter_to_non_overlapping_k_others(
-            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            &[
+                &IntervalSet::new(&vec![0..35]),
+                &IntervalSet::new(&vec![0..160]),
+            ],
             2,
         );
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
         let c = n.filter_to_non_overlapping_k_others(
-            &[&NCList::new(&vec![0..35]), &NCList::new(&vec![0..160])],
+            &[
+                &IntervalSet::new(&vec![0..35]),
+                &IntervalSet::new(&vec![0..160]),
+            ],
             1,
         );
         assert_eq!(c.intervals, vec![100..150, 200..400, 250..300]);
@@ -1073,20 +1199,19 @@ mod tests {
 
     #[test]
     fn test_split() {
-        let mut n = NCList::new(&vec![0..100, 20..30]);
+        let mut n = IntervalSet::new(&vec![0..100, 20..30]);
         let c = n.merge_split();
         assert_eq!(c.intervals, [0..20, 20..30, 30..100]);
         assert_eq!(c.ids, vec![vec![0], vec![0, 1,], vec![0]]);
-        println!("");
 
-        let mut n = NCList::new(&vec![0..100, 0..90, 70..95, 110..150]);
+        let mut n = IntervalSet::new(&vec![0..100, 0..90, 70..95, 110..150]);
         let c = n.merge_split();
         assert_eq!(c.intervals, [0..70, 70..90, 90..95, 95..100, 110..150]);
         assert_eq!(
             c.ids,
             vec![vec![0, 1], vec![0, 1, 2], vec![0, 2], vec![0], vec![3]]
         );
-        let mut n = NCList::new_with_ids(
+        let mut n = IntervalSet::new_with_ids(
             &vec![0..100, 0..90, 70..95, 110..150],
             &vec![100, 200, 300, 400],
         );
@@ -1104,6 +1229,18 @@ mod tests {
         );
         let d = c.merge_split();
         assert_eq!(c, d);
+    }
+
+    #[test]
+    fn test_example() {
+        let intervals = vec![0..20, 15..30, 50..100];
+        let mut interval_set = IntervalSet::new(&intervals);
+        assert_eq!(interval_set.ids, vec![vec![0], vec![1], vec![2]]); // automatic ids, use new_with_ids otherwise
+        let hits = interval_set.query_overlapping(10..16);
+        assert_eq!(hits.intervals, [0..20, 15..30]);
+        let merged = hits.merge_hull();
+        assert_eq!(merged.intervals, [0..30]);
+        assert_eq!(merged.ids, vec![vec![0, 1]]);
     }
 
 }

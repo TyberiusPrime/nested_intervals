@@ -1,8 +1,15 @@
 [package]
-name = "mbf_intervals"
+name = "nested_intervals"
 version = "0.1.0"
 authors = ["Florian Finkernagel <finkernagel@imt.uni-marburg.de>"]
 edition = "2018"
+description = "nested & overlapping interval set functions, overlap, union, etc"
+repository = "https://github.com/TyberiusPrime/nested_intervals"
+readme="Readme.md"
+keywords=["intervals", "nested containment list"]
+categories = ["data-structures"]
+license = "MIT"
+maintenance = { status = "actively-developed" }
 
 [dependencies]
 superslice="1.0.0"
