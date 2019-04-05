@@ -6,7 +6,7 @@ edition = "2018"
 description = "nested & overlapping interval set functions, overlap, union, etc"
 repository = "https://github.com/TyberiusPrime/nested_intervals"
 readme="Readme.md"
-keywords=["intervals", "nested containment list"]
+keywords=["intervals", "nested_containment_list"]
 categories = ["data-structures"]
 license = "MIT"
 maintenance = { status = "actively-developed" }
