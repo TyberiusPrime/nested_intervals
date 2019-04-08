@@ -320,6 +320,51 @@ impl IntervalSet {
         }
         IntervalSet::new_presorted(new_intervals, new_ids)
     }
+    /// Merge intervals that are butted up against each other
+    ///
+    ///This first induces a merge_hull()!
+    ///
+    /// Examples:
+    /// - 0..15, 15..20 -> 0..20
+    /// - 0..15, 16..20, 20..30 > 0..15, 16..30
+    pub fn merge_connected(&self) -> IntervalSet {
+        let hull = self.merge_hull();
+
+        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+        let mut new_ids: Vec<Vec<u32>> = Vec::new();
+        if !self.is_empty() {
+            let mut last = hull.intervals[0].clone();
+            let mut last_ids: Vec<u32> = hull.ids[0].clone();
+            let mut it = 1..(hull.len());
+            while let Some(mut ii) = it.next() {
+                let mut next = &hull.intervals[ii];
+                while last.end == next.start {
+                    if next.end > last.end {
+                        // no point in extending internal intervals
+                        last.end = next.end;
+                    }
+                    last_ids.extend_from_slice(&hull.ids[ii]);
+                    ii = match it.next() {
+                        Some(ii) => ii,
+                        None => {
+                            break;
+                        }
+                    };
+                    next = &hull.intervals[ii];
+                }
+                new_intervals.push(last);
+                last_ids.sort();
+                new_ids.push(last_ids);
+                last = next.clone();
+                last_ids = hull.ids[ii].clone();
+            }
+            if new_intervals.is_empty() || (new_intervals.last().unwrap().end < last.start) {
+                new_intervals.push(last);
+                new_ids.push(last_ids);
+            }
+        }
+        IntervalSet::new_presorted(new_intervals, new_ids)
+    }
 
     /// Remove all intervals that are overlapping or nested
     /// by simply dropping them.
@@ -1104,6 +1149,7 @@ mod tests {
         let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
+
     }
 
     #[test]
@@ -1261,6 +1307,17 @@ mod tests {
         let n = IntervalSet::new_with_ids(&vec![300..400, 30..40], &[20, 10]);
         assert_eq!(n.intervals, [30..40, 300..400]);
         assert_eq!(n.ids, vec![vec![10], vec![20]]);
+    }
+
+    #[test]
+    fn test_merge_connectd() {
+        let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 451..500], &[20, 10, 30]).merge_connected();
+        assert_eq!(n.intervals, [300..450, 451..500]);
+        assert_eq!(n.ids, vec![vec![10, 20], vec![30]]);
+    let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 451..500, 350..355], &[20, 10, 30, 40]).merge_connected();
+        assert_eq!(n.intervals, [300..450, 451..500]);
+        assert_eq!(n.ids, vec![vec![10, 20, 40], vec![30]]);
+
     }
 
 }
