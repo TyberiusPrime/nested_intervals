@@ -498,7 +498,7 @@ impl IntervalSet {
     /// On a tie, the left interval wins.
     pub fn find_closest_start(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
         let left = self.find_closest_start_left(pos);
-        let right = self.find_closest_start_left(pos);
+        let right = self.find_closest_start_right(pos);
         match (left, right) {
             (None, None) => None,
             (Some(l), None) => Some(l),
@@ -1080,6 +1080,8 @@ mod tests {
         let mut n = IntervalSet::new(&vec![]);
         assert!(n.find_closest_start_right(29).is_none());
     }
+
+    #[test]
     fn test_find_closest_start() {
         let mut n = IntervalSet::new(&vec![]);
         assert!(n.find_closest_start(100).is_none());
@@ -1087,10 +1089,14 @@ mod tests {
         assert_eq!(n.find_closest_start(0).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(100).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(149).unwrap(), (100..110, vec![0]));
-        assert_eq!(n.find_closest_start(150).unwrap(), (200..300, vec![1]));
+        assert_eq!(n.find_closest_start(150).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(151).unwrap(), (200..300, vec![1]));
         assert_eq!(n.find_closest_start(251).unwrap(), (200..300, vec![1]));
         assert_eq!(n.find_closest_start(351).unwrap(), (200..300, vec![1]));
+
+
+        let mut n = IntervalSet::new(&vec![10..11, 1000..1110]);
+        assert_eq!(n.find_closest_start(5).unwrap(), (10..11, vec![0]));
     }
 
     #[test]
