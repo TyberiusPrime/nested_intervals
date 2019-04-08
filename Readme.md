@@ -18,6 +18,7 @@ Each interval has a vec of u32 ids attached, which allows linking back the resul
 other data structures.
 
 Full [documentation at docs.rs](https://docs.rs/nested_intervals)
+Source at [GitHub](https://github.com/TyberiusPrime/nested_intervals)
 
 
 Example
