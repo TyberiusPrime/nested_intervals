@@ -95,6 +95,8 @@ impl IntervalSet {
     /// Create an IntervalSet
     ///
     /// Ids may be non-unique
+    /// This consumes both the intervals and ids
+    /// which should safe an allocation in the most common use case
     pub fn new_with_ids(intervals: &[Range<u32>], ids: &[u32]) -> IntervalSet {
         for r in intervals {
             if r.start >= r.end {
@@ -104,12 +106,19 @@ impl IntervalSet {
         if intervals.len() != ids.len() {
             panic!("Intervals and ids had differing lengths");
         }
-        let mut iv = intervals.to_vec();
-        iv.sort_unstable_by(nclist_range_sort);
-        let ids = ids.iter().map(|i| vec![*i]).collect();
+        let mut idx: Vec<usize> = (0..intervals.len()).collect();
+        idx.sort_unstable_by(|idx_a, idx_b| {
+            nclist_range_sort(&intervals[*idx_a], &intervals[*idx_b])
+        });
+        let mut out_iv: Vec<Range<u32>> = Vec::with_capacity(intervals.len());
+        let mut out_ids: Vec<Vec<u32>> = Vec::with_capacity(intervals.len());
+        for ii in 0..idx.len() {
+            out_iv.push(intervals[idx[ii]].clone());
+            out_ids.push(vec![ids[idx[ii]]]);
+        }
         IntervalSet {
-            intervals: iv,
-            ids,
+            intervals: out_iv,
+            ids: out_ids,
             root: None,
         }
     }
@@ -1241,6 +1250,13 @@ mod tests {
         let merged = hits.merge_hull();
         assert_eq!(merged.intervals, [0..30]);
         assert_eq!(merged.ids, vec![vec![0, 1]]);
+    }
+
+    #[test]
+    fn test_new_with_ids_sorting() {
+        let n = IntervalSet::new_with_ids(&vec![300..400, 30..40], &[20, 10]);
+        assert_eq!(n.intervals, [30..40, 300..400]);
+        assert_eq!(n.ids, vec![vec![10], vec![20]]);
     }
 
 }
