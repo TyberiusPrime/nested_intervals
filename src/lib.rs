@@ -35,6 +35,9 @@ where
 /// overlap and nest. They must be start <= end though.
 ///
 /// Our ranges are like Rust ranges, left closed, right open.
+///
+/// Internal storage is sorted by (start, -end), which is enforced
+/// at construction time.
 pub struct IntervalSet {
     intervals: Vec<Range<u32>>,
     ids: Vec<Vec<u32>>,
@@ -305,6 +308,7 @@ impl IntervalSet {
                     next = &self.intervals[ii];
                 }
                 new_intervals.push(last);
+                last_ids.sort();
                 new_ids.push(last_ids);
                 last = next.clone();
                 last_ids = self.ids[ii].clone();
