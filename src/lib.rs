@@ -1094,9 +1094,22 @@ mod tests {
         assert_eq!(n.find_closest_start(251).unwrap(), (200..300, vec![1]));
         assert_eq!(n.find_closest_start(351).unwrap(), (200..300, vec![1]));
 
-
         let mut n = IntervalSet::new(&vec![10..11, 1000..1110]);
         assert_eq!(n.find_closest_start(5).unwrap(), (10..11, vec![0]));
+        let mut n = IntervalSet::new(&vec![
+            566564..667063,
+            569592..570304,
+            713866..714288,
+            935162..937142,
+            1051311..1052403,
+            1279151..1281233,
+            1282803..1283631,
+            1310387..1311060,
+            1337193..1337881,
+            1447089..1447626,
+        ]);
+
+        assert_eq!(n.find_closest_start(570000).unwrap(), (569592..570304, vec![1]));
     }
 
     #[test]
@@ -1333,6 +1346,5 @@ mod tests {
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20, 40], vec![30]]);
     }
-
 
 }
