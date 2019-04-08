@@ -3,6 +3,7 @@ nested_intervals Changelog
 
 
 
+0.1.4 - fixed a bug in merge_hull which would sometimes ommit the last interval
 0.1.3 - added merge_connected
 0.1.2 - ids in merge_hull now sorted like in merge_split
 0.1.1 - fixed new_with_ids to sort ids correctly

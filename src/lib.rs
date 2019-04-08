@@ -30,7 +30,7 @@ where
 /// A collection of Range<u32> and associated ids (u32).
 ///
 /// If no ids are supplied, default ones will be provided.
-///
+/// Merging functions return sorted ids
 /// Little assumption is placed on the intervals, they may
 /// overlap and nest. They must be start <= end though.
 ///
@@ -287,39 +287,28 @@ impl IntervalSet {
     pub fn merge_hull(&self) -> IntervalSet {
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
-        if !self.is_empty() {
-            let mut last = self.intervals[0].clone();
-            let mut last_ids: Vec<u32> = self.ids[0].clone();
-            let mut it = 1..(self.len());
-            while let Some(mut ii) = it.next() {
-                let mut next = &self.intervals[ii];
-                while last.overlaps(next) {
-                    if next.end > last.end {
-                        // no point in extending internal intervals
-                        last.end = next.end;
+        let mut it = self.intervals.iter().zip(self.ids.iter()).peekable();
+        while let Some(this_element) = it.next() {
+            let mut this_iv = this_element.0.start..this_element.0.end;
+            let mut this_ids = this_element.1.clone();
+            while let Some(next) = it.peek() {
+                if next.0.start < this_iv.end {
+                    if next.0.end > this_iv.end {
+                        this_iv.end = next.0.end;
                     }
-                    last_ids.extend_from_slice(&self.ids[ii]);
-                    ii = match it.next() {
-                        Some(ii) => ii,
-                        None => {
-                            break;
-                        }
-                    };
-                    next = &self.intervals[ii];
+                    this_ids.extend_from_slice(&next.1);
+                    it.next(); // consume that one!
+                } else {
+                    break;
                 }
-                new_intervals.push(last);
-                last_ids.sort();
-                new_ids.push(last_ids);
-                last = next.clone();
-                last_ids = self.ids[ii].clone();
             }
-            if new_intervals.is_empty() || (new_intervals.last().unwrap().end < last.start) {
-                new_intervals.push(last);
-                new_ids.push(last_ids);
-            }
+            new_intervals.push(this_iv);
+            this_ids.sort();
+            new_ids.push(this_ids)
         }
         IntervalSet::new_presorted(new_intervals, new_ids)
     }
+
     /// Merge intervals that are butted up against each other
     ///
     ///This first induces a merge_hull()!
@@ -328,29 +317,32 @@ impl IntervalSet {
     /// - 0..15, 15..20 -> 0..20
     /// - 0..15, 16..20, 20..30 > 0..15, 16..30
     pub fn merge_connected(&self) -> IntervalSet {
+        println!("query{:?}", self);
         let hull = self.merge_hull();
+        println!("hull{:?}", hull);
 
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
-        if !self.is_empty() {
+        if !hull.is_empty() {
             let mut last = hull.intervals[0].clone();
             let mut last_ids: Vec<u32> = hull.ids[0].clone();
             let mut it = 1..(hull.len());
             while let Some(mut ii) = it.next() {
                 let mut next = &hull.intervals[ii];
+                println!("{:?}, {:?}", last, next);
                 while last.end == next.start {
-                    if next.end > last.end {
-                        // no point in extending internal intervals
-                        last.end = next.end;
-                    }
+                    println!("enter");
+                    last.end = next.end;
                     last_ids.extend_from_slice(&hull.ids[ii]);
                     ii = match it.next() {
                         Some(ii) => ii,
                         None => {
+                            print!("no more");
                             break;
                         }
                     };
                     next = &hull.intervals[ii];
+                    println!("{:?}, {:?}", last, next);
                 }
                 new_intervals.push(last);
                 last_ids.sort();
@@ -900,6 +892,11 @@ mod tests {
 
     #[test]
     fn test_merge_hull() {
+        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115, 200..201]).merge_hull();
+        assert_eq!(n.intervals, vec![100..180, 200..201]);
+        assert_eq!(n.ids, vec![vec![0, 1, 2], vec![3]]);
+        assert!(!n.any_overlapping());
+
         let n = IntervalSet::new(&vec![100..150]).merge_hull();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
@@ -916,11 +913,11 @@ mod tests {
         assert_eq!(n.intervals, vec![100..180]);
         assert_eq!(n.ids, vec![vec![0, 1, 2]]);
 
-        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115, 200..201]).merge_hull();
-        assert_eq!(n.len(), 2);
-        assert!(!n.any_overlapping());
-        assert_eq!(n.intervals, vec![100..180, 200..201]);
-        assert_eq!(n.ids, vec![vec![0, 1, 2], vec![3]]);
+        let n = IntervalSet::new_with_ids(
+            &vec![300..400, 400..450, 450..500, 510..520],
+            &[20, 10, 30, 40],
+        );
+        assert_eq!(n.intervals, vec![300..400, 400..450, 450..500, 510..520]);
     }
 
     #[test]
@@ -1149,7 +1146,6 @@ mod tests {
         let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
-
     }
 
     #[test]
@@ -1311,13 +1307,24 @@ mod tests {
 
     #[test]
     fn test_merge_connectd() {
-        let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 451..500], &[20, 10, 30]).merge_connected();
+        let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 450..500], &[20, 10, 30]);
+        assert_eq!(n.merge_hull().intervals, vec![300..400, 400..450, 450..500]);
+        println!("{:?}", n);
+        let n = n.merge_connected();
+        assert_eq!(n.intervals, [300..500]);
+        assert_eq!(n.ids, vec![vec![10, 20, 30],]);
+
+        let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 451..500], &[20, 10, 30])
+            .merge_connected();
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20], vec![30]]);
-    let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 451..500, 350..355], &[20, 10, 30, 40]).merge_connected();
+        let n = IntervalSet::new_with_ids(
+            &vec![300..400, 400..450, 451..500, 350..355],
+            &[20, 10, 30, 40],
+        )
+        .merge_connected();
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20, 40], vec![30]]);
-
     }
 
 }
