@@ -732,7 +732,7 @@ pub trait RangePlus<T> {
 
 impl RangePlus<u32> for Range<u32> {
     fn overlaps(&self, other: &Range<u32>) -> bool {
-        (self.start < other.end && other.start < self.end)
+        (self.start < other.end && other.start < self.end && other.start < other.end)
     }
 }
 
@@ -749,6 +749,7 @@ mod tests {
         assert!(n.has_overlap(&(5..20)));
         assert!(!n.has_overlap(&(6..10)));
         assert!(!n.has_overlap(&(100..110)));
+        assert!(!n.has_overlap(&(3..3)));
 
         let r2 = vec![0..15, 0..6];
         let mut n = IntervalSet::new(&r2);
@@ -1326,5 +1327,6 @@ mod tests {
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20, 40], vec![30]]);
     }
+
 
 }
