@@ -317,8 +317,8 @@ impl IntervalSet {
     }
 
     /// retrieve a new IntervalSet with all intervals overlapping the query
-    pub fn query_overlapping(&self, query: &Range<u32>) -> IntervalSet {
-        //self.ensure_nclist();
+    pub fn query_overlapping(&mut self, query: &Range<u32>) -> IntervalSet {
+        self.ensure_nclist();
         let mut collector = VecIntervalCollector::new();
         self.depth_first_search(self.root.as_ref().unwrap(), &query, &mut collector);
         IntervalSet::new_presorted(collector.intervals, collector.ids)
