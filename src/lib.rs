@@ -24,7 +24,6 @@ where
     }
 }
 
-#[derive(Debug)]
 /// IntervalSet
 ///
 /// A collection of Range<u32> and associated ids (u32).
@@ -38,13 +37,13 @@ where
 ///
 /// Internal storage is sorted by (start, -end), which is enforced
 /// at construction time.
+#[derive(Debug)]
 pub struct IntervalSet {
     intervals: Vec<Range<u32>>,
     ids: Vec<Vec<u32>>,
     root: Option<IntervalSetEntry>,
 }
 
-#[derive(Debug)]
 /// IntervalSetEntry
 ///
 /// Used internally to build the nested containment list
@@ -54,9 +53,71 @@ pub struct IntervalSet {
 /// runtime overhead. On the otherhand, we'd need two pointers
 /// to the .intervals and the .ids, or replace those by tuples
 ///
+#[derive(Debug)]
 struct IntervalSetEntry {
     no: i32,
     children: Vec<IntervalSetEntry>,
+}
+
+impl Clone for IntervalSet {
+    fn clone(&self) -> IntervalSet {
+        IntervalSet {
+            intervals: self.intervals.clone(),
+            ids: self.ids.clone(),
+            root: self.root.clone(),
+        }
+    }
+}
+
+impl Clone for IntervalSetEntry {
+    fn clone(&self) -> IntervalSetEntry {
+        IntervalSetEntry {
+            no: self.no,
+            children: self.children.clone(),
+        }
+    }
+}
+
+trait IntervalCollector {
+    fn collect(&mut self, iset: &IntervalSet, no: u32);
+}
+
+struct VecIntervalCollector {
+    intervals: Vec<Range<u32>>,
+    ids: Vec<Vec<u32>>,
+}
+
+impl VecIntervalCollector {
+    fn new() -> VecIntervalCollector {
+        VecIntervalCollector {
+            intervals: Vec::new(),
+            ids: Vec::new(),
+        }
+    }
+}
+
+impl IntervalCollector for VecIntervalCollector {
+    fn collect(&mut self, iset: &IntervalSet, no: u32) {
+        self.intervals.push(iset.intervals[no as usize].clone());
+        self.ids.push(iset.ids[no as usize].clone());
+    }
+}
+struct TagIntervalCollector {
+    hit: Vec<bool>,
+}
+
+impl TagIntervalCollector {
+    fn new(iset: &IntervalSet) -> TagIntervalCollector {
+        TagIntervalCollector {
+            hit: vec![false; iset.len()],
+        }
+    }
+}
+
+impl IntervalCollector for TagIntervalCollector {
+    fn collect(&mut self, _iset: &IntervalSet, no: u32) {
+        self.hit[no as usize] = true;
+    }
 }
 
 /// nclists are based on sorting the intervals by (start, -end)
@@ -199,6 +260,33 @@ impl IntervalSet {
         }
     }
 
+    fn depth_first_search<T: IntervalCollector>(
+        &self,
+        node: &IntervalSetEntry,
+        query: &Range<u32>,
+        collector: &mut T,
+    ) {
+        let children = &node.children[..];
+        //find the first interval that has a stop > query.start
+        //this is also the left most interval in terms of start with such a stop
+
+        ////Todo: is this the correct algorithm from the paper?!
+        let first = children
+            .upper_bound_by_key(&query.start, |entry| self.intervals[entry.no as usize].end);
+        if first == children.len() {
+            return;
+        }
+        for next in &children[first..] {
+            let next_iv = &self.intervals[next.no as usize];
+            if !next_iv.overlaps(query) {
+                return;
+            }
+            collector.collect(&self, next.no as u32);
+            if !next.children.is_empty() {
+                self.depth_first_search(next, query, collector);
+            }
+        }
+    }
     /// Is there any interval overlapping with the query?
     pub fn has_overlap(&mut self, query: &Range<u32>) -> bool {
         if query.start > query.end {
@@ -229,9 +317,11 @@ impl IntervalSet {
     }
 
     /// retrieve a new IntervalSet with all intervals overlapping the query
-    pub fn query_overlapping(&mut self, query: Range<u32>) -> IntervalSet {
-        let keep = self._tag_overlapping(&[query]);
-        self.new_filtered(&keep)
+    pub fn query_overlapping(&self, query: &Range<u32>) -> IntervalSet {
+        //self.ensure_nclist();
+        let mut collector = VecIntervalCollector::new();
+        self.depth_first_search(self.root.as_ref().unwrap(), &query, &mut collector);
+        IntervalSet::new_presorted(collector.intervals, collector.ids)
     }
 
     /// does this IntervalSet contain overlapping intervals?
@@ -317,43 +407,27 @@ impl IntervalSet {
     /// - 0..15, 15..20 -> 0..20
     /// - 0..15, 16..20, 20..30 > 0..15, 16..30
     pub fn merge_connected(&self) -> IntervalSet {
-        println!("query{:?}", self);
         let hull = self.merge_hull();
-        println!("hull{:?}", hull);
-
         let mut new_intervals: Vec<Range<u32>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
-        if !hull.is_empty() {
-            let mut last = hull.intervals[0].clone();
-            let mut last_ids: Vec<u32> = hull.ids[0].clone();
-            let mut it = 1..(hull.len());
-            while let Some(mut ii) = it.next() {
-                let mut next = &hull.intervals[ii];
-                println!("{:?}, {:?}", last, next);
-                while last.end == next.start {
-                    println!("enter");
-                    last.end = next.end;
-                    last_ids.extend_from_slice(&hull.ids[ii]);
-                    ii = match it.next() {
-                        Some(ii) => ii,
-                        None => {
-                            print!("no more");
-                            break;
-                        }
-                    };
-                    next = &hull.intervals[ii];
-                    println!("{:?}, {:?}", last, next);
+        let mut it = hull.intervals.iter().zip(hull.ids.iter()).peekable();
+        while let Some(this_element) = it.next() {
+            let mut this_iv = this_element.0.start..this_element.0.end;
+            let mut this_ids = this_element.1.clone();
+            while let Some(next) = it.peek() {
+                if next.0.start == this_iv.end {
+                    if next.0.end > this_iv.end {
+                        this_iv.end = next.0.end;
+                    }
+                    this_ids.extend_from_slice(&next.1);
+                    it.next(); // consume that one!
+                } else {
+                    break;
                 }
-                new_intervals.push(last);
-                last_ids.sort();
-                new_ids.push(last_ids);
-                last = next.clone();
-                last_ids = hull.ids[ii].clone();
             }
-            if new_intervals.is_empty() || (new_intervals.last().unwrap().end < last.start) {
-                new_intervals.push(last);
-                new_ids.push(last_ids);
-            }
+            new_intervals.push(this_iv);
+            this_ids.sort();
+            new_ids.push(this_ids)
         }
         IntervalSet::new_presorted(new_intervals, new_ids)
     }
@@ -579,8 +653,12 @@ impl IntervalSet {
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
         //(we have to visit them any how to check the keep tags)
-        let keep = self._tag_overlapping(&other.intervals);
-        self.new_filtered(&keep)
+        self.ensure_nclist();
+        let mut collector = TagIntervalCollector::new(&self);
+        for q in other.intervals.iter() {
+            self.depth_first_search(self.root.as_ref().unwrap(), q, &mut collector);
+        }
+        self.new_filtered(&collector.hit)
     }
 
     /// Filter to those intervals that have no overlap in other.
@@ -608,8 +686,6 @@ impl IntervalSet {
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
         //(we have to visit them any how to check the keep tags)
-        //  let keep = self._tag_overlapping(query);
-        // self.new_filtered(&keep)
 
         let counts = self._count_overlapping(others);
         let mut keep = vec![false; self.len()];
@@ -630,8 +706,6 @@ impl IntervalSet {
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
         //(we have to visit them any how to check the keep tags)
-        //  let keep = self._tag_overlapping(query);
-        // self.new_filtered(&keep)
         let counts = self._count_overlapping(others);
         let mut keep = vec![false; self.len()];
         for (ii, value) in counts.iter().enumerate() {
@@ -668,46 +742,15 @@ impl IntervalSet {
         }
     }
 
-    fn _tag_overlapping_recursion(
-        &self,
-        node: &IntervalSetEntry,
-        query: &Range<u32>,
-        tags: &mut Vec<bool>,
-    ) {
-        let children = &node.children[..];
-        //find the first interval that has a stop > query.start
-        //this is also the left most interval in terms of start with such a stop
-        let first = children
-            .upper_bound_by_key(&query.start, |entry| self.intervals[entry.no as usize].end);
-        if first == children.len() {
-            return;
-        }
-        for next in &children[first..] {
-            let next_iv = &self.intervals[next.no as usize];
-            if !next_iv.overlaps(query) {
-                return;
-            }
-            tags[next.no as usize] = true;
-            if !next.children.is_empty() {
-                self._tag_overlapping_recursion(next, query, tags);
-            }
-        }
-    }
-
-    fn _tag_overlapping(&mut self, query: &[Range<u32>]) -> Vec<bool> {
-        self.ensure_nclist();
-        let mut keep = vec![false; self.len()];
-        for q in query {
-            self._tag_overlapping_recursion(&self.root.as_ref().unwrap(), &q, &mut keep);
-        }
-        keep
-    }
-
     fn _count_overlapping(&mut self, others: &[&IntervalSet]) -> Vec<u32> {
+        self.ensure_nclist();
         let mut counts: Vec<u32> = vec![0; self.len()];
         for o in others {
-            let keep = self._tag_overlapping(&o.intervals);
-            for (ii, value) in keep.iter().enumerate() {
+            let mut collector = TagIntervalCollector::new(&self);
+            for q in o.intervals.iter() {
+                self.depth_first_search(self.root.as_ref().unwrap(), q, &mut collector);
+            }
+            for (ii, value) in collector.hit.iter().enumerate() {
                 if *value {
                     counts[ii] += 1;
                 }
@@ -792,18 +835,18 @@ mod tests {
     #[test]
     fn test_query() {
         let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.query_overlapping(0..5);
+        let c = n.query_overlapping(&(0..5));
         assert!(c.is_empty());
-        let c = n.query_overlapping(0..31);
+        let c = n.query_overlapping(&(0..31));
         assert_eq!(c.intervals, vec![30..40]);
-        let c = n.query_overlapping(200..250);
+        let c = n.query_overlapping(&(200..250));
         assert_eq!(c.intervals, vec![200..400]);
-        let c = n.query_overlapping(200..251);
+        let c = n.query_overlapping(&(200..251));
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.query_overlapping(0..1000);
+        let c = n.query_overlapping(&(0..1000));
         dbg!(&c);
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.query_overlapping(401..1000);
+        let c = n.query_overlapping(&(401..1000));
         assert!(c.is_empty());
     }
     #[test]
@@ -1109,7 +1152,10 @@ mod tests {
             1447089..1447626,
         ]);
 
-        assert_eq!(n.find_closest_start(570000).unwrap(), (569592..570304, vec![1]));
+        assert_eq!(
+            n.find_closest_start(570000).unwrap(),
+            (569592..570304, vec![1])
+        );
     }
 
     #[test]
@@ -1311,7 +1357,7 @@ mod tests {
         let intervals = vec![0..20, 15..30, 50..100];
         let mut interval_set = IntervalSet::new(&intervals);
         assert_eq!(interval_set.ids, vec![vec![0], vec![1], vec![2]]); // automatic ids, use new_with_ids otherwise
-        let hits = interval_set.query_overlapping(10..16);
+        let hits = interval_set.query_overlapping(&(10..16));
         assert_eq!(hits.intervals, [0..20, 15..30]);
         let merged = hits.merge_hull();
         assert_eq!(merged.intervals, [0..30]);
@@ -1345,6 +1391,25 @@ mod tests {
         .merge_connected();
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20, 40], vec![30]]);
+        let n = IntervalSet::new_with_ids(
+            &vec![300..400, 400..450, 450..500, 510..520],
+            &[20, 10, 30, 40],
+        )
+        .merge_connected();
+        assert_eq!(n.intervals, vec![300..500, 510..520]);
+    }
+
+    #[test]
+    fn test_clone() {
+        let mut n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 450..500], &[20, 10, 30]);
+        let n2 = n.clone();
+        assert_eq!(n.intervals, n2.intervals);
+        assert_eq!(n.ids, n2.ids);
+        assert!(n2.root.is_none());
+        n.has_overlap(&(0..1));
+        assert!(n2.root.is_none());
+        let n2 = n.clone();
+        assert!(n2.root.is_some());
     }
 
 }
