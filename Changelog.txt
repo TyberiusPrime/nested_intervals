@@ -3,6 +3,8 @@ nested_intervals Changelog
 
 
 
+0.1.8 - fixed a panic in merge_split with repeated ids 
+0.1.7 - refactoring only
 0.1.6 - find_closest now correctly looks both directions
 0.1.5 - has_overlap return false on empty (x..y is x>=y) intervals
 0.1.4 - fixed a bug in merge_hull which would sometimes ommit the last interval
