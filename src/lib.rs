@@ -333,6 +333,19 @@ impl IntervalSet {
         }
         false
     }
+   /// which intervals are overlapping? 
+   ///
+   /// Result is a Vec<bool>
+    pub fn overlap_status(&self) -> Vec<bool> {
+        let mut result = vec![false; self.intervals.len()];
+        for (ii, (next, last)) in self.intervals.iter().skip(1).zip(self.intervals.iter()).enumerate() {
+            if last.overlaps(next) {
+                result[ii] = true; // ii starts at 0
+                result[ii+1] = true;
+            }
+        }
+        result
+    }
 
     /// does this IntervalSet contain nested intervals?
     pub fn any_nested(&mut self) -> bool {
@@ -1532,7 +1545,21 @@ mod tests {
 15558445..15558626, 
         ];
         let ids = vec![5, 5, 5, 9, 9, 5, 5, 5, 5, 5];
-        let mut n = IntervalSet::new_with_ids(&intervals, &ids).merge_split();
+        let n = IntervalSet::new_with_ids(&intervals, &ids).merge_split();
         assert!(!n.any_overlapping());
+    }
+
+    #[test]
+    fn test_overlap_status() {
+        let intervals = vec![
+            0..100,
+            50..150,
+            150..200,
+            201..230,
+            230..250,
+            249..500,
+            550..600];
+        let n = IntervalSet::new(&intervals);
+        assert_eq!(n.overlap_status(), vec![true, true, false, false, true, true, false] );
     }
 }
