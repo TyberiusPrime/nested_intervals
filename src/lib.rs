@@ -1,4 +1,5 @@
 #![feature(nll)]
+use itertools::Itertools;
 use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::ops::Range;
@@ -136,24 +137,32 @@ fn nclist_range_sort(a: &Range<u32>, b: &Range<u32>) -> Ordering {
     }
 }
 
+#[derive(Debug)]
+pub enum NestedIntervalError {
+    ///a negative interval was passed, ie. stop < start
+    NegativeInterval,
+    ///intervals and ids had differing lengths
+    IntervalIdMisMatch,
+}
+
 impl IntervalSet {
     /// Create an IntervalSet without supplying ids
     ///
     /// ids will be 0..n in the order of the *sorted* intervals
-    pub fn new(intervals: &[Range<u32>]) -> IntervalSet {
+    pub fn new(intervals: &[Range<u32>]) -> Result<IntervalSet, NestedIntervalError> {
         for r in intervals {
             if r.start >= r.end {
-                panic!("Negative interval");
+                return Err(NestedIntervalError::NegativeInterval);
             }
         }
         let mut iv = intervals.to_vec();
         iv.sort_unstable_by(nclist_range_sort);
         let count = iv.len();
-        IntervalSet {
+        Ok(IntervalSet {
             intervals: iv,
             ids: (0..count).map(|x| vec![x as u32]).collect(),
             root: None,
-        }
+        })
     }
 
     /// Create an IntervalSet
@@ -161,14 +170,17 @@ impl IntervalSet {
     /// Ids may be non-unique
     /// This consumes both the intervals and ids
     /// which should safe an allocation in the most common use case
-    pub fn new_with_ids(intervals: &[Range<u32>], ids: &[u32]) -> IntervalSet {
+    pub fn new_with_ids(
+        intervals: &[Range<u32>],
+        ids: &[u32],
+    ) -> Result<IntervalSet, NestedIntervalError> {
         for r in intervals {
             if r.start >= r.end {
-                panic!("Negative interval");
+                return Err(NestedIntervalError::NegativeInterval);
             }
         }
         if intervals.len() != ids.len() {
-            panic!("Intervals and ids had differing lengths");
+            return Err(NestedIntervalError::IntervalIdMisMatch);
         }
         let mut idx: Vec<usize> = (0..intervals.len()).collect();
         idx.sort_unstable_by(|idx_a, idx_b| {
@@ -180,11 +192,11 @@ impl IntervalSet {
             out_iv.push(intervals[idx[ii]].clone());
             out_ids.push(vec![ids[idx[ii]]]);
         }
-        IntervalSet {
+        Ok(IntervalSet {
             intervals: out_iv,
             ids: out_ids,
             root: None,
-        }
+        })
     }
 
     /// filter this interval set by a bool vec, true are kept
@@ -232,6 +244,7 @@ impl IntervalSet {
                     }
                     let (ii, r) = it.next().unwrap();
                     if r.start > r.end {
+                        //should be handled by the constructors
                         panic!("invalid interval end < start");
                     }
                     let entry = IntervalSetEntry {
@@ -288,9 +301,9 @@ impl IntervalSet {
         }
     }
     /// Is there any interval overlapping with the query?
-    pub fn has_overlap(&mut self, query: &Range<u32>) -> bool {
+    pub fn has_overlap(&mut self, query: &Range<u32>) -> Result<bool, NestedIntervalError> {
         if query.start > query.end {
-            panic!("invalid interval end < start");
+            return Err(NestedIntervalError::NegativeInterval);
         }
         self.ensure_nclist();
         //has overlap is easy because all we have to do is scan the first level
@@ -302,10 +315,10 @@ impl IntervalSet {
             .upper_bound_by_key(&query.start, |entry| self.intervals[entry.no as usize].end);
         if first == children.len() {
             // ie no entry larger...
-            return false;
+            return Ok(false);
         }
         let next = &self.intervals[first];
-        next.overlaps(&query)
+        Ok(next.overlaps(&query))
     }
 
     /// create an iterator over ```(Range<u32>, &vec![id])``` tuples.
@@ -333,15 +346,21 @@ impl IntervalSet {
         }
         false
     }
-   /// which intervals are overlapping? 
-   ///
-   /// Result is a Vec<bool>
+    /// which intervals are overlapping?
+    ///
+    /// Result is a Vec<bool>
     pub fn overlap_status(&self) -> Vec<bool> {
         let mut result = vec![false; self.intervals.len()];
-        for (ii, (next, last)) in self.intervals.iter().skip(1).zip(self.intervals.iter()).enumerate() {
+        for (ii, (next, last)) in self
+            .intervals
+            .iter()
+            .skip(1)
+            .zip(self.intervals.iter())
+            .enumerate()
+        {
             if last.overlaps(next) {
                 result[ii] = true; // ii starts at 0
-                result[ii+1] = true;
+                result[ii + 1] = true;
             }
         }
         result
@@ -672,13 +691,19 @@ impl IntervalSet {
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
 
-        let keep: Vec<bool> = self
+        let keep: Result<Vec<bool>, NestedIntervalError> = self
             .intervals
             .iter()
             .enumerate()
-            .map(|(_ii, iv)| !other.has_overlap(iv))
+            .map(|(_ii, iv)| other.has_overlap(iv))
+            .map_results(|x| !x)
             .collect();
-        self.new_filtered(&keep)
+        match keep {
+            Ok(keep) => self.new_filtered(&keep),
+            Err(_) => panic!(
+                "Negative intervals encountered inside IntervalSets - check input sanity code"
+            ),
+        }
     }
 
     /// Filter to those intervals that have an overlap in at least k others.
@@ -730,7 +755,7 @@ impl IntervalSet {
         for o in others {
             new_intervals.extend_from_slice(&o.intervals);
         }
-        IntervalSet::new(&new_intervals[..])
+        IntervalSet::new(&new_intervals[..]).unwrap()
     }
 
     /// find the highest interval.end in our data set
@@ -792,41 +817,41 @@ mod tests {
     #[test]
     fn test_has_overlap() {
         let r = vec![0..5, 10..15];
-        let mut n = IntervalSet::new(&r);
-        assert!(n.has_overlap(&(3..4)));
-        assert!(n.has_overlap(&(5..20)));
-        assert!(!n.has_overlap(&(6..10)));
-        assert!(!n.has_overlap(&(100..110)));
-        assert!(!n.has_overlap(&(3..3)));
+        let mut n = IntervalSet::new(&r).unwrap();
+        assert!(n.has_overlap(&(3..4)).unwrap());
+        assert!(n.has_overlap(&(5..20)).unwrap());
+        assert!(!n.has_overlap(&(6..10)).unwrap());
+        assert!(!n.has_overlap(&(100..110)).unwrap());
+        assert!(!n.has_overlap(&(3..3)).unwrap());
 
         let r2 = vec![0..15, 0..6];
-        let mut n = IntervalSet::new(&r2);
-        assert!(n.has_overlap(&(3..4)));
-        assert!(n.has_overlap(&(5..20)));
-        assert!(n.has_overlap(&(6..10)));
-        assert!(!n.has_overlap(&(20..30)));
+        let mut n = IntervalSet::new(&r2).unwrap();
+        assert!(n.has_overlap(&(3..4)).unwrap());
+        assert!(n.has_overlap(&(5..20)).unwrap());
+        assert!(n.has_overlap(&(6..10)).unwrap());
+        assert!(!n.has_overlap(&(20..30)).unwrap());
 
         let r2 = vec![100..150, 30..40, 200..400];
-        let mut n = IntervalSet::new(&r2);
-        assert!(n.has_overlap(&(101..102)));
-        assert!(n.has_overlap(&(149..150)));
-        assert!(n.has_overlap(&(39..99)));
-        assert!(n.has_overlap(&(29..99)));
-        assert!(n.has_overlap(&(19..99)));
-        assert!(!n.has_overlap(&(0..5)));
-        assert!(!n.has_overlap(&(0..29)));
-        assert!(!n.has_overlap(&(0..30)));
-        assert!(n.has_overlap(&(0..31)));
-        assert!(!n.has_overlap(&(40..41)));
-        assert!(!n.has_overlap(&(40..99)));
-        assert!(!n.has_overlap(&(40..100)));
-        assert!(n.has_overlap(&(40..101)));
-        assert!(n.has_overlap(&(399..400)));
-        assert!(!n.has_overlap(&(400..4000)));
+        let mut n = IntervalSet::new(&r2).unwrap();
+        assert!(n.has_overlap(&(101..102)).unwrap());
+        assert!(n.has_overlap(&(149..150)).unwrap());
+        assert!(n.has_overlap(&(39..99)).unwrap());
+        assert!(n.has_overlap(&(29..99)).unwrap());
+        assert!(n.has_overlap(&(19..99)).unwrap());
+        assert!(!n.has_overlap(&(0..5)).unwrap());
+        assert!(!n.has_overlap(&(0..29)).unwrap());
+        assert!(!n.has_overlap(&(0..30)).unwrap());
+        assert!(n.has_overlap(&(0..31)).unwrap());
+        assert!(!n.has_overlap(&(40..41)).unwrap());
+        assert!(!n.has_overlap(&(40..99)).unwrap());
+        assert!(!n.has_overlap(&(40..100)).unwrap());
+        assert!(n.has_overlap(&(40..101)).unwrap());
+        assert!(n.has_overlap(&(399..400)).unwrap());
+        assert!(!n.has_overlap(&(400..4000)).unwrap());
     }
     #[test]
     fn test_iter() {
-        let n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]).unwrap();
         let c: Vec<(&Range<u32>, &Vec<u32>)> = n.iter().collect();
         assert!(!c.is_empty());
         let c: Vec<Range<u32>> = c
@@ -839,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_query() {
-        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]).unwrap();
         let c = n.query_overlapping(&(0..5));
         assert!(c.is_empty());
         let c = n.query_overlapping(&(0..31));
@@ -856,83 +881,100 @@ mod tests {
     }
     #[test]
     fn test_query_multiple() {
-        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![0..5, 0..105]));
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]).unwrap();
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![0..5, 0..105]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 100..150]);
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![500..600, 550..700]));
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![500..600, 550..700]).unwrap());
         assert!(c.is_empty());
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![45..230]));
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![45..230]).unwrap());
         assert_eq!(c.intervals, vec![100..150, 200..400]);
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![45..101, 101..230]));
+        let c = n.filter_to_overlapping(&mut IntervalSet::new(&vec![45..101, 101..230]).unwrap());
         assert_eq!(c.intervals, vec![100..150, 200..400]);
     }
 
     #[test]
     fn test_query_multiple_non_overlapping() {
-        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..5, 0..105]));
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]).unwrap();
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..5, 0..105]).unwrap());
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![500..600, 550..700]));
+        let c =
+            n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![500..600, 550..700]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..600]));
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..600]).unwrap());
         assert!(c.is_empty());
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![45..230]));
+        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![45..230]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![45..101, 101..230]));
+        let c =
+            n.filter_to_non_overlapping(&mut IntervalSet::new(&vec![45..101, 101..230]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 250..300]);
     }
 
     #[test]
     fn test_any_overlapping() {
-        let n = IntervalSet::new(&vec![100..150]);
+        let n = IntervalSet::new(&vec![100..150]).unwrap();
         assert!(!n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 200..300]);
+        let n = IntervalSet::new(&vec![100..150, 200..300]).unwrap();
         assert!(!n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 150..300]);
+        let n = IntervalSet::new(&vec![100..150, 150..300]).unwrap();
         assert!(!n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..151, 150..300]);
+        let n = IntervalSet::new(&vec![100..151, 150..300]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..151, 105..110]);
+        let n = IntervalSet::new(&vec![100..151, 105..110]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..151, 105..110, 0..1000]);
+        let n = IntervalSet::new(&vec![100..151, 105..110, 0..1000]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 150..210, 0..1000]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 0..1000]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 150..210, 0..130]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 0..130]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 150..210, 150..250]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 150..250]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 150..210, 149..250]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 149..250]).unwrap();
         assert!(n.any_overlapping());
-        let n = IntervalSet::new(&vec![100..150, 150..210, 209..250]);
+        let n = IntervalSet::new(&vec![100..150, 150..210, 209..250]).unwrap();
         assert!(n.any_overlapping());
     }
 
     #[test]
     fn test_any_nested() {
-        assert!(!IntervalSet::new(&vec![]).any_nested());;
-        assert!(!IntervalSet::new(&vec![100..150]).any_nested());;
-        assert!(!IntervalSet::new(&vec![100..150, 150..300]).any_nested());;
-        assert!(!IntervalSet::new(&vec![100..151, 150..300]).any_nested());;
-        assert!(IntervalSet::new(&vec![100..151, 150..300, 100..130]).any_nested());;
-        assert!(IntervalSet::new(&vec![100..151, 150..300, 0..1000]).any_nested());;
+        assert!(!IntervalSet::new(&vec![]).unwrap().any_nested());;
+        assert!(!IntervalSet::new(&vec![100..150]).unwrap().any_nested());;
+        assert!(!IntervalSet::new(&vec![100..150, 150..300])
+            .unwrap()
+            .any_nested());;
+        assert!(!IntervalSet::new(&vec![100..151, 150..300])
+            .unwrap()
+            .any_nested());;
+        assert!(IntervalSet::new(&vec![100..151, 150..300, 100..130])
+            .unwrap()
+            .any_nested());;
+        assert!(IntervalSet::new(&vec![100..151, 150..300, 0..1000])
+            .unwrap()
+            .any_nested());;
     }
 
     #[test]
     fn test_remove_duplicates() {
-        let n = IntervalSet::new(&vec![100..150]).remove_duplicates();
+        let n = IntervalSet::new(&vec![100..150])
+            .unwrap()
+            .remove_duplicates();
         assert!(!n.any_overlapping());
         assert_eq!(n.len(), 1);
 
-        let n = IntervalSet::new(&vec![30..40, 30..40, 100..150]).remove_duplicates();
+        let n = IntervalSet::new(&vec![30..40, 30..40, 100..150])
+            .unwrap()
+            .remove_duplicates();
         assert!(!n.any_overlapping());
         assert_eq!(n.len(), 2);
-        let n = IntervalSet::new(&vec![30..40, 30..40, 35..150]).remove_duplicates();
+        let n = IntervalSet::new(&vec![30..40, 30..40, 35..150])
+            .unwrap()
+            .remove_duplicates();
         assert_eq!(n.len(), 2);
         let n = IntervalSet::new_with_ids(
             &vec![30..40, 30..40, 35..150, 35..150, 36..38],
             &[55, 56, 57, 58, 59],
         )
+        .unwrap()
         .remove_duplicates();
         assert_eq!(n.len(), 3);
         dbg!(&n);
@@ -941,22 +983,28 @@ mod tests {
 
     #[test]
     fn test_merge_hull() {
-        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115, 200..201]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115, 200..201])
+            .unwrap()
+            .merge_hull();
         assert_eq!(n.intervals, vec![100..180, 200..201]);
         assert_eq!(n.ids, vec![vec![0, 1, 2], vec![3]]);
         assert!(!n.any_overlapping());
 
-        let n = IntervalSet::new(&vec![100..150]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150]).unwrap().merge_hull();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
 
-        let n = IntervalSet::new(&vec![100..150, 120..180]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150, 120..180])
+            .unwrap()
+            .merge_hull();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![100..180]);
         assert_eq!(n.ids, vec![vec![0, 1]]);
 
-        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115]).merge_hull();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 110..115])
+            .unwrap()
+            .merge_hull();
         assert!(n.len() == 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![100..180]);
@@ -965,40 +1013,48 @@ mod tests {
         let n = IntervalSet::new_with_ids(
             &vec![300..400, 400..450, 450..500, 510..520],
             &[20, 10, 30, 40],
-        );
+        )
+        .unwrap();
         assert_eq!(n.intervals, vec![300..400, 400..450, 450..500, 510..520]);
     }
 
     #[test]
     fn test_merge_drop() {
-        let n = IntervalSet::new(&vec![]).merge_drop();
+        let n = IntervalSet::new(&vec![]).unwrap().merge_drop();
         assert_eq!(n.len(), 0);
         assert!(!n.any_overlapping());
 
-        let n = IntervalSet::new(&vec![100..150]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150]).unwrap().merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
 
-        let n = IntervalSet::new(&vec![100..150, 120..180]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180])
+            .unwrap()
+            .merge_drop();
         assert_eq!(n.len(), 0);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![]);
         assert_eq!(n.ids, Vec::<Vec<u32>>::new());
 
-        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250])
+            .unwrap()
+            .merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![200..250]);
         assert_eq!(n.ids, vec![vec![2]]);
 
-        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250, 106..110]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250, 106..110])
+            .unwrap()
+            .merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![200..250]);
         assert_eq!(n.ids, vec![vec![3]]);
 
-        let n =
-            IntervalSet::new(&vec![100..150, 120..180, 200..250, 106..110, 80..105]).merge_drop();
+        let n = IntervalSet::new(&vec![100..150, 120..180, 200..250, 106..110, 80..105])
+            .unwrap()
+            .merge_drop();
         assert_eq!(n.len(), 1);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![200..250]);
@@ -1012,6 +1068,7 @@ mod tests {
             80..105,
             30..40,
         ])
+        .unwrap()
         .merge_drop();
         assert_eq!(n.len(), 2);
         assert!(!n.any_overlapping());
@@ -1027,12 +1084,15 @@ mod tests {
             30..40,
             400..405,
         ])
+        .unwrap()
         .merge_drop();
         assert_eq!(n.len(), 3);
         assert!(!n.any_overlapping());
         assert_eq!(n.intervals, vec![30..40, 200..250, 400..405]);
         assert_eq!(n.ids, vec![vec![0], vec![5], vec![6]]);
-        let n = IntervalSet::new(&vec![0..20, 10..15, 20..35, 30..40, 40..50]).merge_drop();
+        let n = IntervalSet::new(&vec![0..20, 10..15, 20..35, 30..40, 40..50])
+            .unwrap()
+            .merge_drop();
         assert_eq!(n.intervals, vec![40..50]);
     }
 
@@ -1048,7 +1108,8 @@ mod tests {
             120..180,
             200..250,
             400..405,
-        ]);
+        ])
+        .unwrap();
         //find the first range that has an end to the left of this
         assert!(n.find_closest_start_left(29).is_none());
         assert_eq!(n.find_closest_start_left(100).unwrap(), (100..150, vec![2]));
@@ -1065,7 +1126,7 @@ mod tests {
             n.find_closest_start_left(121000).unwrap(),
             (400..405, vec![8])
         );
-        let mut n = IntervalSet::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]).unwrap();
         assert!(n.find_closest_start_left(29).is_none());
     }
 
@@ -1081,7 +1142,8 @@ mod tests {
             120..180,
             200..250,
             400..405,
-        ]);
+        ])
+        .unwrap();
         //find the first range that has an end to the right of this
         assert_eq!(n.find_closest_start_right(10).unwrap(), (30..40, vec![0]));
         assert_eq!(n.find_closest_start_right(29).unwrap(), (30..40, vec![0]));
@@ -1125,15 +1187,15 @@ mod tests {
             (200..250, vec![7])
         );
         assert!(n.find_closest_start_right(121000).is_none());
-        let mut n = IntervalSet::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]).unwrap();
         assert!(n.find_closest_start_right(29).is_none());
     }
 
     #[test]
     fn test_find_closest_start() {
-        let mut n = IntervalSet::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]).unwrap();
         assert!(n.find_closest_start(100).is_none());
-        let mut n = IntervalSet::new(&vec![100..110, 200..300]);
+        let mut n = IntervalSet::new(&vec![100..110, 200..300]).unwrap();
         assert_eq!(n.find_closest_start(0).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(100).unwrap(), (100..110, vec![0]));
         assert_eq!(n.find_closest_start(149).unwrap(), (100..110, vec![0]));
@@ -1142,7 +1204,7 @@ mod tests {
         assert_eq!(n.find_closest_start(251).unwrap(), (200..300, vec![1]));
         assert_eq!(n.find_closest_start(351).unwrap(), (200..300, vec![1]));
 
-        let mut n = IntervalSet::new(&vec![10..11, 1000..1110]);
+        let mut n = IntervalSet::new(&vec![10..11, 1000..1110]).unwrap();
         assert_eq!(n.find_closest_start(5).unwrap(), (10..11, vec![0]));
         let mut n = IntervalSet::new(&vec![
             566564..667063,
@@ -1155,7 +1217,8 @@ mod tests {
             1310387..1311060,
             1337193..1337881,
             1447089..1447626,
-        ]);
+        ])
+        .unwrap();
 
         assert_eq!(
             n.find_closest_start(570000).unwrap(),
@@ -1165,29 +1228,29 @@ mod tests {
 
     #[test]
     fn test_covered_units() {
-        let mut n = IntervalSet::new(&vec![]);
+        let mut n = IntervalSet::new(&vec![]).unwrap();
         assert_eq!(n.covered_units(), 0);
-        let mut n = IntervalSet::new(&vec![10..100]);
+        let mut n = IntervalSet::new(&vec![10..100]).unwrap();
         assert_eq!(n.covered_units(), 90);
-        let mut n = IntervalSet::new(&vec![10..100, 200..300]);
+        let mut n = IntervalSet::new(&vec![10..100, 200..300]).unwrap();
         assert_eq!(n.covered_units(), 90 + 100);
-        let mut n = IntervalSet::new(&vec![10..100, 200..300, 15..99]);
+        let mut n = IntervalSet::new(&vec![10..100, 200..300, 15..99]).unwrap();
         assert_eq!(n.covered_units(), 90 + 100);
-        let mut n = IntervalSet::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        let mut n = IntervalSet::new(&vec![10..100, 200..300, 15..99, 15..105]).unwrap();
         assert_eq!(n.covered_units(), 90 + 100 + 5);
     }
 
     #[test]
     fn test_mean_interval_size() {
-        let n = IntervalSet::new(&vec![]);
+        let n = IntervalSet::new(&vec![]).unwrap();
         assert!(n.mean_interval_size().is_nan());
-        let n = IntervalSet::new(&vec![10..100]);
+        let n = IntervalSet::new(&vec![10..100]).unwrap();
         assert_eq!(n.mean_interval_size(), 90.);
-        let n = IntervalSet::new(&vec![10..100, 200..300]);
+        let n = IntervalSet::new(&vec![10..100, 200..300]).unwrap();
         assert_eq!(n.mean_interval_size(), (90 + 100) as f64 / 2.0);
-        let n = IntervalSet::new(&vec![10..100, 200..300, 15..99]);
+        let n = IntervalSet::new(&vec![10..100, 200..300, 15..99]).unwrap();
         assert_eq!(n.mean_interval_size(), (90 + 100 + (99 - 15)) as f64 / 3.0);
-        let n = IntervalSet::new(&vec![10..100, 200..300, 15..99, 15..105]);
+        let n = IntervalSet::new(&vec![10..100, 200..300, 15..99, 15..105]).unwrap();
         assert_eq!(
             n.mean_interval_size(),
             (((100 - 10) + (300 - 200) + (99 - 15) + (105 - 15)) as f64 / 4.0)
@@ -1196,47 +1259,64 @@ mod tests {
 
     #[test]
     fn test_invert() {
-        let n = IntervalSet::new(&vec![]).invert(0, 100);
+        let n = IntervalSet::new(&vec![]).unwrap().invert(0, 100);
         assert_eq!(n.intervals, vec![0..100,]);
         assert_eq!(n.ids, vec![vec![0]]);
-        let n = IntervalSet::new(&vec![30..40]).invert(0, 100);
+        let n = IntervalSet::new(&vec![30..40]).unwrap().invert(0, 100);
         assert_eq!(n.intervals, vec![0..30, 40..100,]);
         assert_eq!(n.ids, vec![vec![0], vec![1]]);
-        let n = IntervalSet::new(&vec![30..40, 35..38]).invert(0, 100);
+        let n = IntervalSet::new(&vec![30..40, 35..38])
+            .unwrap()
+            .invert(0, 100);
         assert_eq!(n.intervals, vec![0..30, 40..100,]);
         assert_eq!(n.ids, vec![vec![0], vec![1]]);
-        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(0, 100);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50])
+            .unwrap()
+            .invert(0, 100);
         assert_eq!(n.intervals, vec![0..30, 50..100,]);
         assert_eq!(n.ids, vec![vec![0], vec![1]]);
-        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(40, 100);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50])
+            .unwrap()
+            .invert(40, 100);
         assert_eq!(n.intervals, vec![50..100,]);
         assert_eq!(n.ids, vec![vec![0]]);
-        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50, 55..60]).invert(40, 40);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50, 55..60])
+            .unwrap()
+            .invert(40, 40);
         assert_eq!(n.intervals, vec![50..55]);
         assert_eq!(n.ids, vec![vec![0]]);
-        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50]).invert(40, 40);
+        let n = IntervalSet::new(&vec![30..40, 35..38, 35..50])
+            .unwrap()
+            .invert(40, 40);
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
     }
 
     #[test]
     fn test_union() {
-        let n = IntervalSet::new(&vec![]).union(vec![&IntervalSet::new(&vec![0..100])]);
+        let n = IntervalSet::new(&vec![])
+            .unwrap()
+            .union(vec![&IntervalSet::new(&vec![0..100]).unwrap()]);
         assert_eq!(n.intervals, vec![0..100]);
 
-        let n = IntervalSet::new(&vec![0..10]).union(vec![&IntervalSet::new(&vec![0..100])]);
+        let n = IntervalSet::new(&vec![0..10])
+            .unwrap()
+            .union(vec![&IntervalSet::new(&vec![0..100]).unwrap()]);
         assert_eq!(n.intervals, vec![0..100, 0..10]);
 
-        let n =
-            IntervalSet::new(&vec![0..10]).union(vec![&IntervalSet::new(&vec![0..100, 200..300])]);
+        let n = IntervalSet::new(&vec![0..10])
+            .unwrap()
+            .union(vec![&IntervalSet::new(&vec![0..100, 200..300]).unwrap()]);
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
 
-        let n = IntervalSet::new(&vec![0..10]).union(vec![&IntervalSet::new(&vec![])]);
+        let n = IntervalSet::new(&vec![0..10])
+            .unwrap()
+            .union(vec![&IntervalSet::new(&vec![]).unwrap()]);
         assert_eq!(n.intervals, vec![0..10]);
-        let n = IntervalSet::new(&vec![0..10]).union(vec![
-            &IntervalSet::new(&vec![0..100]),
-            &IntervalSet::new(&vec![200..300]),
+        let n = IntervalSet::new(&vec![0..10]).unwrap().union(vec![
+            &IntervalSet::new(&vec![0..100]).unwrap(),
+            &IntervalSet::new(&vec![200..300]).unwrap(),
         ]);
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
@@ -1245,50 +1325,58 @@ mod tests {
     #[test]
     fn test_substract() {
         let n = IntervalSet::new(&vec![])
-            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]));
+            .unwrap()
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]).unwrap());
         assert!(n.intervals.is_empty());
 
         let n = IntervalSet::new(&vec![0..10])
-            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]));
+            .unwrap()
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]).unwrap());
         assert!(n.intervals.is_empty());
 
         let n = IntervalSet::new(&vec![0..10, 100..150])
-            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]));
+            .unwrap()
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![0..100]).unwrap());
         assert_eq!(n.intervals, vec![100..150]);
 
         let n = IntervalSet::new(&vec![0..10, 100..150, 150..300])
-            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![55..101]));
+            .unwrap()
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![55..101]).unwrap());
         assert_eq!(n.intervals, vec![0..10, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![2]]);
 
         let n = IntervalSet::new(&vec![0..10, 5..6, 100..150, 150..300])
-            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![55..101]));
+            .unwrap()
+            .filter_to_non_overlapping(&mut IntervalSet::new(&vec![55..101]).unwrap());
         assert_eq!(n.intervals, vec![0..10, 5..6, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![3]]);
     }
 
     #[test]
     fn test_filter_overlapping_multiples() {
-        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 1);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]).unwrap();
+        let c =
+            n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105]).unwrap()], 1);
         assert_eq!(c.intervals, vec![30..40, 100..150]);
-        let c = n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 0);
+        let c =
+            n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105]).unwrap()], 0);
         assert_eq!(c, n);
-        let c = n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 2);
+        let c =
+            n.filter_to_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105]).unwrap()], 2);
         assert!(c.is_empty());
 
         let c = n.filter_to_overlapping_k_others(
             &[
-                &IntervalSet::new(&vec![0..35]),
-                &IntervalSet::new(&vec![0..160]),
+                &IntervalSet::new(&vec![0..35]).unwrap(),
+                &IntervalSet::new(&vec![0..160]).unwrap(),
             ],
             2,
         );
         assert_eq!(c.intervals, vec![30..40,]);
         let c = n.filter_to_overlapping_k_others(
             &[
-                &IntervalSet::new(&vec![0..35]),
-                &IntervalSet::new(&vec![0..160]),
+                &IntervalSet::new(&vec![0..35]).unwrap(),
+                &IntervalSet::new(&vec![0..160]).unwrap(),
             ],
             1,
         );
@@ -1297,26 +1385,35 @@ mod tests {
 
     #[test]
     fn test_filter_non_overlapping_multiples() {
-        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 1);
+        let mut n = IntervalSet::new(&vec![100..150, 30..40, 200..400, 250..300]).unwrap();
+        let c = n.filter_to_non_overlapping_k_others(
+            &[&IntervalSet::new(&vec![0..5, 0..105]).unwrap()],
+            1,
+        );
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 0);
+        let c = n.filter_to_non_overlapping_k_others(
+            &[&IntervalSet::new(&vec![0..5, 0..105]).unwrap()],
+            0,
+        );
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.filter_to_non_overlapping_k_others(&[&IntervalSet::new(&vec![0..5, 0..105])], 2);
+        let c = n.filter_to_non_overlapping_k_others(
+            &[&IntervalSet::new(&vec![0..5, 0..105]).unwrap()],
+            2,
+        );
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
 
         let c = n.filter_to_non_overlapping_k_others(
             &[
-                &IntervalSet::new(&vec![0..35]),
-                &IntervalSet::new(&vec![0..160]),
+                &IntervalSet::new(&vec![0..35]).unwrap(),
+                &IntervalSet::new(&vec![0..160]).unwrap(),
             ],
             2,
         );
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
         let c = n.filter_to_non_overlapping_k_others(
             &[
-                &IntervalSet::new(&vec![0..35]),
-                &IntervalSet::new(&vec![0..160]),
+                &IntervalSet::new(&vec![0..35]).unwrap(),
+                &IntervalSet::new(&vec![0..160]).unwrap(),
             ],
             1,
         );
@@ -1325,12 +1422,12 @@ mod tests {
 
     #[test]
     fn test_split() {
-        let mut n = IntervalSet::new(&vec![0..100, 20..30]);
+        let mut n = IntervalSet::new(&vec![0..100, 20..30]).unwrap();
         let c = n.merge_split();
         assert_eq!(c.intervals, [0..20, 20..30, 30..100]);
         assert_eq!(c.ids, vec![vec![0], vec![0, 1,], vec![0]]);
 
-        let mut n = IntervalSet::new(&vec![0..100, 0..90, 70..95, 110..150]);
+        let mut n = IntervalSet::new(&vec![0..100, 0..90, 70..95, 110..150]).unwrap();
         let c = n.merge_split();
         assert_eq!(c.intervals, [0..70, 70..90, 90..95, 95..100, 110..150]);
         assert_eq!(
@@ -1340,7 +1437,8 @@ mod tests {
         let mut n = IntervalSet::new_with_ids(
             &vec![0..100, 0..90, 70..95, 110..150],
             &vec![100, 200, 300, 400],
-        );
+        )
+        .unwrap();
         let mut c = n.merge_split();
         assert_eq!(c.intervals, [0..70, 70..90, 90..95, 95..100, 110..150]);
         assert_eq!(
@@ -1360,7 +1458,7 @@ mod tests {
     #[test]
     fn test_example() {
         let intervals = vec![0..20, 15..30, 50..100];
-        let mut interval_set = IntervalSet::new(&intervals);
+        let mut interval_set = IntervalSet::new(&intervals).unwrap();
         assert_eq!(interval_set.ids, vec![vec![0], vec![1], vec![2]]); // automatic ids, use new_with_ids otherwise
         let hits = interval_set.query_overlapping(&(10..16));
         assert_eq!(hits.intervals, [0..20, 15..30]);
@@ -1371,20 +1469,22 @@ mod tests {
 
     #[test]
     fn test_new_with_ids_sorting() {
-        let n = IntervalSet::new_with_ids(&vec![300..400, 30..40], &[20, 10]);
+        let n = IntervalSet::new_with_ids(&vec![300..400, 30..40], &[20, 10]).unwrap();
         assert_eq!(n.intervals, [30..40, 300..400]);
         assert_eq!(n.ids, vec![vec![10], vec![20]]);
     }
 
     #[test]
     fn test_merge_connectd() {
-        let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 450..500], &[20, 10, 30]);
+        let n =
+            IntervalSet::new_with_ids(&vec![300..400, 400..450, 450..500], &[20, 10, 30]).unwrap();
         assert_eq!(n.merge_hull().intervals, vec![300..400, 400..450, 450..500]);
         let n = n.merge_connected();
         assert_eq!(n.intervals, [300..500]);
         assert_eq!(n.ids, vec![vec![10, 20, 30],]);
 
         let n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 451..500], &[20, 10, 30])
+            .unwrap()
             .merge_connected();
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20], vec![30]]);
@@ -1392,6 +1492,7 @@ mod tests {
             &vec![300..400, 400..450, 451..500, 350..355],
             &[20, 10, 30, 40],
         )
+        .unwrap()
         .merge_connected();
         assert_eq!(n.intervals, [300..450, 451..500]);
         assert_eq!(n.ids, vec![vec![10, 20, 40], vec![30]]);
@@ -1399,13 +1500,15 @@ mod tests {
             &vec![300..400, 400..450, 450..500, 510..520],
             &[20, 10, 30, 40],
         )
+        .unwrap()
         .merge_connected();
         assert_eq!(n.intervals, vec![300..500, 510..520]);
     }
 
     #[test]
     fn test_clone() {
-        let mut n = IntervalSet::new_with_ids(&vec![300..400, 400..450, 450..500], &[20, 10, 30]);
+        let mut n =
+            IntervalSet::new_with_ids(&vec![300..400, 400..450, 450..500], &[20, 10, 30]).unwrap();
         let n2 = n.clone();
         assert_eq!(n.intervals, n2.intervals);
         assert_eq!(n.ids, n2.ids);
@@ -1526,26 +1629,28 @@ mod tests {
             10, 10, 6, 6, 5, 6, 6, 6, 10, 10, 6, 6, 6, 6, 6, 6,
         ];
 
-        let mut n = IntervalSet::new_with_ids(&intervals, &ids);
+        let mut n = IntervalSet::new_with_ids(&intervals, &ids).unwrap();
         n.merge_split();
     }
 
     #[test]
     fn test_merge_split_non_remains_overlapping() {
         let intervals = vec![
-        15489989..15490131,
-15490871..15490947,
-15492485..15492564,
-15490131..15490871,
-15490947..15492485,
-15489989..15490131,
-15490871..15490947,
-15492485..15492564,
-15541435..15541607,
-15558445..15558626, 
+            15489989..15490131,
+            15490871..15490947,
+            15492485..15492564,
+            15490131..15490871,
+            15490947..15492485,
+            15489989..15490131,
+            15490871..15490947,
+            15492485..15492564,
+            15541435..15541607,
+            15558445..15558626,
         ];
         let ids = vec![5, 5, 5, 9, 9, 5, 5, 5, 5, 5];
-        let n = IntervalSet::new_with_ids(&intervals, &ids).merge_split();
+        let n = IntervalSet::new_with_ids(&intervals, &ids)
+            .unwrap()
+            .merge_split();
         assert!(!n.any_overlapping());
     }
 
@@ -1558,8 +1663,12 @@ mod tests {
             201..230,
             230..250,
             249..500,
-            550..600];
-        let n = IntervalSet::new(&intervals);
-        assert_eq!(n.overlap_status(), vec![true, true, false, false, true, true, false] );
+            550..600,
+        ];
+        let n = IntervalSet::new(&intervals).unwrap();
+        assert_eq!(
+            n.overlap_status(),
+            vec![true, true, false, false, true, true, false]
+        );
     }
 }

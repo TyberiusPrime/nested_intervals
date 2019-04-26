@@ -2,7 +2,7 @@ nested_intervals Changelog
 =====================================
 
 
-
+0.2.0 - switched from 'panic' input error handling to Result
 0.1.9 - introduced overlap_status
 0.1.8 - fixed a panic in merge_split with repeated ids 
 0.1.7 - refactoring only
