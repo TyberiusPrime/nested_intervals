@@ -1,4 +1,3 @@
-#![feature(nll)]
 use itertools::Itertools;
 use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
