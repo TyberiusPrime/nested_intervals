@@ -1287,8 +1287,20 @@ mod tests {
         let n = IntervalSet::new(&vec![30..40, 35..38, 35..50])
             .unwrap()
             .invert(40, 40);
+
         assert!(n.intervals.is_empty());
         assert!(n.ids.is_empty());
+
+        // this of course only works for distinct intervals
+        let n = IntervalSet::new(&vec![10..20, 35..38, 40..50]).unwrap();
+        let ni = n.invert(0, 50);
+        let nii = ni.invert(0, 50);
+        assert_eq!(n.intervals, nii.intervals);
+
+        let n = IntervalSet::new(&vec![10..36, 35..38, 40..50]).unwrap();
+        let ni = n.invert(0, 100);
+        let n2 = n.union(vec![&ni]).merge_connected();
+        assert_eq!(n2.intervals, vec![0..100]);
     }
 
     #[test]
@@ -1512,7 +1524,7 @@ mod tests {
         assert_eq!(n.intervals, n2.intervals);
         assert_eq!(n.ids, n2.ids);
         assert!(n2.root.is_none());
-        n.has_overlap(&(0..1));
+        n.has_overlap(&(0..1)).unwrap();
         assert!(n2.root.is_none());
         let n2 = n.clone();
         assert!(n2.root.is_some());
