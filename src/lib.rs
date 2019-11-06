@@ -476,7 +476,7 @@ impl IntervalSet {
         for ii in 0..self.len() {
             if self.intervals[ii].start < last_stop {
                 keep[ii] = false;
-                keep[ii - 1] = false;;
+                keep[ii - 1] = false;
             }
             if self.intervals[ii].end > last_stop {
                 last_stop = self.intervals[ii].end;
@@ -936,20 +936,20 @@ mod tests {
 
     #[test]
     fn test_any_nested() {
-        assert!(!IntervalSet::new(&vec![]).unwrap().any_nested());;
-        assert!(!IntervalSet::new(&vec![100..150]).unwrap().any_nested());;
+        assert!(!IntervalSet::new(&vec![]).unwrap().any_nested());
+        assert!(!IntervalSet::new(&vec![100..150]).unwrap().any_nested());
         assert!(!IntervalSet::new(&vec![100..150, 150..300])
             .unwrap()
-            .any_nested());;
+            .any_nested());
         assert!(!IntervalSet::new(&vec![100..151, 150..300])
             .unwrap()
-            .any_nested());;
+            .any_nested());
         assert!(IntervalSet::new(&vec![100..151, 150..300, 100..130])
             .unwrap()
-            .any_nested());;
+            .any_nested());
         assert!(IntervalSet::new(&vec![100..151, 150..300, 0..1000])
             .unwrap()
-            .any_nested());;
+            .any_nested());
     }
 
     #[test]
@@ -1301,6 +1301,10 @@ mod tests {
         let ni = n.invert(0, 100);
         let n2 = n.union(vec![&ni]).merge_connected();
         assert_eq!(n2.intervals, vec![0..100]);
+
+        let n = IntervalSet::new(&vec![]).unwrap();
+        let ni = n.invert(0, 100);
+        assert_eq!(ni.intervals, vec![0..100]);
     }
 
     #[test]
