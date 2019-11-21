@@ -2,6 +2,7 @@ nested_intervals Changelog
 =====================================
 
 
+0.2.2 - fixed a bug in merge_split where outer intervals being split in "three" would not be processed correctly.
 0.2.1 - removed feature(nll)
 0.2.0 - switched from 'panic' input error handling to Result
 0.1.9 - introduced overlap_status

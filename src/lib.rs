@@ -532,14 +532,16 @@ impl IntervalSet {
                 last_ids.insert(*id, 1);
             }
             for next in it {
-                if (last.kind == SiteKind::Start)
-                    || ((last.kind == SiteKind::End) && (next.kind == SiteKind::End))
+                //if (last.kind == SiteKind::Start)
+                 //   || ((last.kind == SiteKind::End) && (next.kind == SiteKind::End))
                 {
                     if last.pos != next.pos {
-                        new_intervals.push(last.pos..next.pos);
-                        let mut ids_here: Vec<u32> = last_ids.keys().cloned().collect();
-                        ids_here.sort();
-                        new_ids.push(ids_here);
+                        if !last_ids.is_empty() {
+                            new_intervals.push(last.pos..next.pos);
+                            let mut ids_here: Vec<u32> = last_ids.keys().cloned().collect();
+                            ids_here.sort();
+                            new_ids.push(ids_here);
+                        }
                     }
                 }
                 match next.kind {
@@ -1468,6 +1470,57 @@ mod tests {
         );
         let d = c.merge_split();
         assert_eq!(c, d);
+
+        let mut n = IntervalSet::new_with_ids(
+            &vec![0..100, 5..10, 15..20],
+            &vec![100, 200, 300],
+        ).unwrap();
+        let c = n.merge_split();
+        assert_eq!(c.intervals, [
+                   0..5,
+                   5..10, 
+                   10..15,
+                   15..20,
+                   20..100]);
+        assert_eq!(
+            c.ids,
+            vec![
+                vec![100],
+                vec![100, 200],
+                vec![100],
+                vec![100, 300],
+                vec![100]
+            ]
+        );
+
+        let mut n = IntervalSet::new_with_ids(
+            &vec![0..100, 5..50, 10..15, 25..75],
+            &vec![100, 200, 300, 400],
+        ).unwrap();
+        let c = n.merge_split();
+        assert_eq!(c.intervals, [
+                   0..5,
+                   5..10, 
+                   10..15,
+                   15..25,
+                   25..50,
+                   50..75,
+                   75..100
+        ]);
+        assert_eq!(
+            c.ids,
+            vec![
+                vec![100], // 0..5
+                vec![100, 200], // 5..10
+                vec![100, 200, 300], //10..15
+                vec![100, 200],//15..25
+                vec![100, 200, 400], //25..50
+                vec![100, 400],  //50..75
+                vec![100] //75..100
+            ]
+        );
+
+
     }
 
     #[test]
