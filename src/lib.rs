@@ -24,9 +24,24 @@ where
     }
 }
 
-/// IntervalSet
+/// the integer type for the interval's ranges.
+/// e.g. u32, u64
+pub trait Rangable: num::PrimInt { }
+
+impl Rangable for u16 {}
+impl Rangable for u32 {}
+impl Rangable for u64 {}
+impl Rangable for u128 {}
+
+impl Rangable for i16 {}
+impl Rangable for i32 {}
+impl Rangable for i64 {}
+impl Rangable for i128 {}
+
+
+/// IntervalSetGeneric
 ///
-/// A collection of Range<u32> and associated ids (u32).
+/// A collection of Range<Rangable> and associated ids (u32).
 ///
 /// If no ids are supplied, default ones will be provided.
 /// Merging functions return sorted ids
@@ -38,11 +53,14 @@ where
 /// Internal storage is sorted by (start, -end), which is enforced
 /// at construction time.
 #[derive(Debug)]
-pub struct IntervalSet {
-    intervals: Vec<Range<u32>>,
+pub struct IntervalSetGeneric<T: Rangable> {
+    intervals: Vec<Range<T>>,
     ids: Vec<Vec<u32>>,
     root: Option<IntervalSetEntry>,
 }
+
+/// An IntervalSetGeneric<u32>
+pub type IntervalSet = IntervalSetGeneric<u32>;
 
 /// IntervalSetEntry
 ///
@@ -59,9 +77,9 @@ struct IntervalSetEntry {
     children: Vec<IntervalSetEntry>,
 }
 
-impl Clone for IntervalSet {
-    fn clone(&self) -> IntervalSet {
-        IntervalSet {
+impl<T: Rangable> Clone for IntervalSetGeneric<T> {
+    fn clone(&self) -> IntervalSetGeneric<T> {
+        IntervalSetGeneric {
             intervals: self.intervals.clone(),
             ids: self.ids.clone(),
             root: self.root.clone(),
@@ -78,17 +96,17 @@ impl Clone for IntervalSetEntry {
     }
 }
 
-trait IntervalCollector {
-    fn collect(&mut self, iset: &IntervalSet, no: u32);
+trait IntervalCollector<T: Rangable> {
+    fn collect(&mut self, iset: &IntervalSetGeneric<T>, no: u32);
 }
 
-struct VecIntervalCollector {
-    intervals: Vec<Range<u32>>,
+struct VecIntervalCollector<T: Rangable> {
+    intervals: Vec<Range<T>>,
     ids: Vec<Vec<u32>>,
 }
 
-impl VecIntervalCollector {
-    fn new() -> VecIntervalCollector {
+impl<T: Rangable> VecIntervalCollector<T> {
+    fn new() -> VecIntervalCollector<T> {
         VecIntervalCollector {
             intervals: Vec::new(),
             ids: Vec::new(),
@@ -96,33 +114,33 @@ impl VecIntervalCollector {
     }
 }
 
-impl IntervalCollector for VecIntervalCollector {
-    fn collect(&mut self, iset: &IntervalSet, no: u32) {
+impl<T: Rangable> IntervalCollector<T> for VecIntervalCollector<T> {
+    fn collect(&mut self, iset: &IntervalSetGeneric<T>, no: u32) {
         self.intervals.push(iset.intervals[no as usize].clone());
         self.ids.push(iset.ids[no as usize].clone());
     }
 }
-struct TagIntervalCollector {
+struct TagIntervalCollector{
     hit: Vec<bool>,
 }
 
-impl TagIntervalCollector {
-    fn new(iset: &IntervalSet) -> TagIntervalCollector {
+impl  TagIntervalCollector {
+    fn new<T: Rangable>(iset: &IntervalSetGeneric<T>) -> TagIntervalCollector {
         TagIntervalCollector {
             hit: vec![false; iset.len()],
         }
     }
 }
 
-impl IntervalCollector for TagIntervalCollector {
-    fn collect(&mut self, _iset: &IntervalSet, no: u32) {
+impl<T: Rangable> IntervalCollector<T> for TagIntervalCollector {
+    fn collect(&mut self, _iset: &IntervalSetGeneric<T>, no: u32) {
         self.hit[no as usize] = true;
     }
 }
 
 /// nclists are based on sorting the intervals by (start, -end)
 #[allow(clippy::needless_return)]
-fn nclist_range_sort(a: &Range<u32>, b: &Range<u32>) -> Ordering {
+fn nclist_range_sort<T: Rangable>(a: &Range<T>, b: &Range<T>) -> Ordering {
     if a.start < b.start {
         return Ordering::Less;
     } else if a.start > b.start {
@@ -144,11 +162,11 @@ pub enum NestedIntervalError {
     IntervalIdMisMatch,
 }
 
-impl IntervalSet {
+impl<T: Rangable> IntervalSetGeneric<T> {
     /// Create an IntervalSet without supplying ids
     ///
     /// ids will be 0..n in the order of the *sorted* intervals
-    pub fn new(intervals: &[Range<u32>]) -> Result<IntervalSet, NestedIntervalError> {
+    pub fn new(intervals: &[Range<T>]) -> Result<IntervalSetGeneric<T>, NestedIntervalError> {
         for r in intervals {
             if r.start >= r.end {
                 return Err(NestedIntervalError::NegativeInterval);
@@ -157,7 +175,7 @@ impl IntervalSet {
         let mut iv = intervals.to_vec();
         iv.sort_unstable_by(nclist_range_sort);
         let count = iv.len();
-        Ok(IntervalSet {
+        Ok(IntervalSetGeneric {
             intervals: iv,
             ids: (0..count).map(|x| vec![x as u32]).collect(),
             root: None,
@@ -170,9 +188,9 @@ impl IntervalSet {
     /// This consumes both the intervals and ids
     /// which should safe an allocation in the most common use case
     pub fn new_with_ids(
-        intervals: &[Range<u32>],
+        intervals: &[Range<T>],
         ids: &[u32],
-    ) -> Result<IntervalSet, NestedIntervalError> {
+    ) -> Result<IntervalSetGeneric<T>, NestedIntervalError> {
         for r in intervals {
             if r.start >= r.end {
                 return Err(NestedIntervalError::NegativeInterval);
@@ -185,13 +203,13 @@ impl IntervalSet {
         idx.sort_unstable_by(|idx_a, idx_b| {
             nclist_range_sort(&intervals[*idx_a], &intervals[*idx_b])
         });
-        let mut out_iv: Vec<Range<u32>> = Vec::with_capacity(intervals.len());
+        let mut out_iv: Vec<Range<T>> = Vec::with_capacity(intervals.len());
         let mut out_ids: Vec<Vec<u32>> = Vec::with_capacity(intervals.len());
         for ii in 0..idx.len() {
             out_iv.push(intervals[idx[ii]].clone());
             out_ids.push(vec![ids[idx[ii]]]);
         }
-        Ok(IntervalSet {
+        Ok(IntervalSetGeneric {
             intervals: out_iv,
             ids: out_ids,
             root: None,
@@ -199,8 +217,8 @@ impl IntervalSet {
     }
 
     /// filter this interval set by a bool vec, true are kept
-    fn new_filtered(&self, keep: &[bool]) -> IntervalSet {
-        IntervalSet {
+    fn new_filtered(&self, keep: &[bool]) -> IntervalSetGeneric<T> {
+        IntervalSetGeneric {
             intervals: self.intervals.filter_by_bools(keep),
             ids: self.ids.filter_by_bools(keep),
             root: None,
@@ -209,8 +227,8 @@ impl IntervalSet {
 
     /// used by the merge functions to bypass the sorting and checking
     /// on already sorted & checked intervals
-    fn new_presorted(intervals: Vec<Range<u32>>, ids: Vec<Vec<u32>>) -> IntervalSet {
-        IntervalSet {
+    fn new_presorted(intervals: Vec<Range<T>>, ids: Vec<Vec<u32>>) -> IntervalSetGeneric<T> {
+        IntervalSetGeneric {
             intervals,
             ids,
             root: None,
@@ -232,7 +250,7 @@ impl IntervalSet {
         &self,
         parent: &mut IntervalSetEntry,
         it: &mut std::iter::Peekable<
-            std::iter::Enumerate<std::slice::Iter<'_, std::ops::Range<u32>>>,
+            std::iter::Enumerate<std::slice::Iter<'_, std::ops::Range<T>>>,
         >,
     ) {
         loop {
@@ -272,11 +290,11 @@ impl IntervalSet {
         }
     }
 
-    fn depth_first_search<T: IntervalCollector>(
+    fn depth_first_search<S: IntervalCollector<T>>(
         &self,
         node: &IntervalSetEntry,
-        query: &Range<u32>,
-        collector: &mut T,
+        query: &Range<T>,
+        collector: &mut S,
     ) {
         let children = &node.children[..];
         //find the first interval that has a stop > query.start
@@ -300,7 +318,7 @@ impl IntervalSet {
         }
     }
     /// Is there any interval overlapping with the query?
-    pub fn has_overlap(&mut self, query: &Range<u32>) -> Result<bool, NestedIntervalError> {
+    pub fn has_overlap(&mut self, query: &Range<T>) -> Result<bool, NestedIntervalError> {
         if query.start > query.end {
             return Err(NestedIntervalError::NegativeInterval);
         }
@@ -320,20 +338,20 @@ impl IntervalSet {
         Ok(next.overlaps(query))
     }
 
-    /// create an iterator over ```(Range<u32>, &vec![id])``` tuples.
+    /// create an iterator over ```(Range<T>, &vec![id])``` tuples.
     pub fn iter(
         &self,
-    ) -> std::iter::Zip<std::slice::Iter<'_, std::ops::Range<u32>>, std::slice::Iter<'_, Vec<u32>>>
+    ) -> std::iter::Zip<std::slice::Iter<'_, std::ops::Range<T>>, std::slice::Iter<'_, Vec<u32>>>
     {
         self.intervals.iter().zip(self.ids.iter())
     }
 
     /// retrieve a new IntervalSet with all intervals overlapping the query
-    pub fn query_overlapping(&mut self, query: &Range<u32>) -> IntervalSet {
+    pub fn query_overlapping(&mut self, query: &Range<T>) -> IntervalSetGeneric<T> {
         self.ensure_nclist();
         let mut collector = VecIntervalCollector::new();
         self.depth_first_search(self.root.as_ref().unwrap(), query, &mut collector);
-        IntervalSet::new_presorted(collector.intervals, collector.ids)
+        IntervalSetGeneric::new_presorted(collector.intervals, collector.ids)
     }
 
     /// does this IntervalSet contain overlapping intervals?
@@ -379,7 +397,7 @@ impl IntervalSet {
     /// remove intervals that have the same coordinates
     ///
     /// Ids are **not** merged, the first set is being kept
-    pub fn remove_duplicates(&self) -> IntervalSet {
+    pub fn remove_duplicates(&self) -> IntervalSetGeneric<T> {
         let mut keep = vec![false; self.len()];
         keep[0] = true;
         for (ix, (v1, v2)) in self
@@ -395,7 +413,7 @@ impl IntervalSet {
     }
 
     /// remove empty intervals, ie. those with start == end
-    pub fn remove_empty(&self) -> IntervalSet {
+    pub fn remove_empty(&self) -> IntervalSetGeneric<T> {
         let keep: Vec<bool> = self.intervals.iter().map(|r| r.start != r.end).collect();
         self.new_filtered(&keep)
     }
@@ -405,8 +423,8 @@ impl IntervalSet {
     /// Examples:
     /// - 0..15, 10..20 -> 0..20
     /// - 0..20, 3..5 -> 0..20
-    pub fn merge_hull(&self) -> IntervalSet {
-        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+    pub fn merge_hull(&self) -> IntervalSetGeneric<T> {
+        let mut new_intervals: Vec<Range<T>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
         let mut it = self.intervals.iter().zip(self.ids.iter()).peekable();
         while let Some(this_element) = it.next() {
@@ -427,7 +445,7 @@ impl IntervalSet {
             this_ids.sort();
             new_ids.push(this_ids)
         }
-        IntervalSet::new_presorted(new_intervals, new_ids)
+        IntervalSetGeneric::new_presorted(new_intervals, new_ids)
     }
 
     /// Merge intervals that are butted up against each other
@@ -437,9 +455,9 @@ impl IntervalSet {
     /// Examples:
     /// - 0..15, 15..20 -> 0..20
     /// - 0..15, 16..20, 20..30 > 0..15, 16..30
-    pub fn merge_connected(&self) -> IntervalSet {
+    pub fn merge_connected(&self) -> IntervalSetGeneric<T> {
         let hull = self.merge_hull();
-        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+        let mut new_intervals: Vec<Range<T>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
         let mut it = hull.intervals.iter().zip(hull.ids.iter()).peekable();
         while let Some(this_element) = it.next() {
@@ -460,7 +478,7 @@ impl IntervalSet {
             this_ids.sort();
             new_ids.push(this_ids)
         }
-        IntervalSet::new_presorted(new_intervals, new_ids)
+        IntervalSetGeneric::new_presorted(new_intervals, new_ids)
     }
 
     /// Remove all intervals that are overlapping or nested
@@ -470,9 +488,9 @@ impl IntervalSet {
     /// - 0..20, 10..15, 20..35, 30..40, 40..50 -> 40..50
     ///
     /// Ids of the remaining intervals are unchanged
-    pub fn merge_drop(&self) -> IntervalSet {
+    pub fn merge_drop(&self) -> IntervalSetGeneric<T> {
         let mut keep = vec![true; self.len()];
-        let mut last_stop = 0;
+        let mut last_stop = T::zero();
         for ii in 0..self.len() {
             if self.intervals[ii].start < last_stop {
                 keep[ii] = false;
@@ -496,19 +514,19 @@ impl IntervalSet {
     /// ```[[0], [0,1], [1]]```
     ///
     /// merge_split on an already disjoint set is a no-op
-    pub fn merge_split(&mut self) -> IntervalSet {
+    pub fn merge_split(&mut self) -> IntervalSetGeneric<T> {
         #[derive(PartialEq, Eq, PartialOrd, Ord, Copy, Clone, Debug)]
         enum SiteKind {
             End,
             Start,
         }
         #[derive(Debug)]
-        struct Site {
-            pos: u32,
+        struct Site<T> {
+            pos: T,
             kind: SiteKind,
             id: Vec<u32>,
         }
-        let mut sites: Vec<Site> = Vec::new();
+        let mut sites: Vec<Site<T>> = Vec::new();
         for (iv, id) in self.intervals.iter().zip(self.ids.iter()) {
             sites.push(Site {
                 pos: iv.start,
@@ -558,7 +576,7 @@ impl IntervalSet {
                 last = next;
             }
         }
-        IntervalSet {
+        IntervalSetGeneric {
             intervals: new_intervals,
             ids: new_ids,
             root: None,
@@ -567,7 +585,7 @@ impl IntervalSet {
 
     /// find the interval with the closest start to the left of pos
     /// None if there are no intervals to the left of pos
-    pub fn find_closest_start_left(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
+    pub fn find_closest_start_left(&mut self, pos: T) -> Option<(Range<T>, Vec<u32>)> {
         let first = self.intervals.upper_bound_by_key(&pos, |entry| entry.start);
         if first == 0 {
             return None;
@@ -578,10 +596,10 @@ impl IntervalSet {
 
     /// find the interval with the closest start to the right of pos
     /// None if there are no intervals to the right of pos
-    pub fn find_closest_start_right(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
+    pub fn find_closest_start_right(&mut self, pos: T) -> Option<(Range<T>, Vec<u32>)> {
         let first = self
             .intervals
-            .upper_bound_by_key(&pos, |entry| entry.start + 1);
+            .upper_bound_by_key(&pos, |entry| entry.start + T::one());
         // since this the first element strictly greater, we have to do -1
         if first == self.len() {
             return None;
@@ -593,7 +611,7 @@ impl IntervalSet {
     ///
     /// None if the IntervalSet is empty
     /// On a tie, the left interval wins.
-    pub fn find_closest_start(&mut self, pos: u32) -> Option<(Range<u32>, Vec<u32>)> {
+    pub fn find_closest_start(&mut self, pos: T) -> Option<(Range<T>, Vec<u32>)> {
         let left = self.find_closest_start_left(pos);
         let right = self.find_closest_start_right(pos);
         match (left, right) {
@@ -601,8 +619,11 @@ impl IntervalSet {
             (Some(l), None) => Some(l),
             (None, Some(r)) => Some(r),
             (Some(l), Some(r)) => {
-                let distance_left = (i64::from(l.0.start) - i64::from(pos)).abs();
-                let distance_right = (i64::from(r.0.start) - i64::from(pos)).abs();
+                /* let distance_left = (i64::from(l.0.start) - i64::from(pos)).abs();
+                let distance_right = (i64::from(r.0.start) - i64::from(pos)).abs(); */
+                let distance_left =  if l.0.start > pos { l.0.start - pos } else { pos - l.0.start };
+                let distance_right = if r.0.start > pos { r.0.start - pos } else { pos - r.0.start };
+
                 if distance_left <= distance_right {
                     Some(l)
                 } else {
@@ -612,12 +633,12 @@ impl IntervalSet {
         }
     }
 
-    /// how many units does this IntervalSet cover
-    pub fn covered_units(&mut self) -> u32 {
+    /// how many units in interval space does this IntervalSet cover
+    pub fn covered_units(&mut self) -> T {
         let merged = self.merge_hull();
-        let mut total = 0;
+        let mut total = T::zero();
         for iv in merged.intervals.iter() {
-            total += iv.end - iv.start;
+            total = total + iv.end - iv.start;
         }
         total
     }
@@ -625,11 +646,12 @@ impl IntervalSet {
     /// What is the mean size of the intervals
     #[allow(clippy::cast_lossless)]
     pub fn mean_interval_size(&self) -> f64 {
-        let mut total = 0;
+        let mut total = T::zero();
         for iv in self.intervals.iter() {
-            total += iv.end - iv.start;
+            total = total + iv.end - iv.start;
         }
-        total as f64 / self.len() as f64
+        let total: f64 = total.to_f64().unwrap();
+        total / self.len() as f64
     }
 
     /// Invert the intervals in this set
@@ -642,8 +664,8 @@ impl IntervalSet {
     /// - invert([15..20], 20, 30) -> [0..15, 20..30]
     ///
     /// Ids are lost
-    pub fn invert(&self, lower_bound: u32, upper_bound: u32) -> IntervalSet {
-        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+    pub fn invert(&self, lower_bound: T, upper_bound: T) -> IntervalSetGeneric<T> {
+        let mut new_intervals: Vec<Range<T>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
 
         if self.is_empty() {
@@ -667,11 +689,11 @@ impl IntervalSet {
             );
             new_ids.extend((0..new_intervals.len()).map(|x| vec![x as u32]));
         }
-        IntervalSet::new_presorted(new_intervals, new_ids)
+        IntervalSetGeneric::new_presorted(new_intervals, new_ids)
     }
 
     /// Filter to those intervals that have an overlap in other.
-    pub fn filter_to_overlapping(&mut self, other: &mut IntervalSet) -> IntervalSet {
+    pub fn filter_to_overlapping(&mut self, other: &mut IntervalSetGeneric<T>) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -685,7 +707,7 @@ impl IntervalSet {
     }
 
     /// Filter to those intervals that have no overlap in other.
-    pub fn filter_to_non_overlapping(&mut self, other: &mut IntervalSet) -> IntervalSet {
+    pub fn filter_to_non_overlapping(&mut self, other: &mut IntervalSetGeneric<T>) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -695,7 +717,7 @@ impl IntervalSet {
             .iter()
             .enumerate()
             .map(|(_ii, iv)| other.has_overlap(iv))
-            .map_results(|x| !x)
+            .map_ok(|x| !x)
             .collect();
         match keep {
             Ok(keep) => self.new_filtered(&keep),
@@ -708,9 +730,9 @@ impl IntervalSet {
     /// Filter to those intervals that have an overlap in at least k others.
     pub fn filter_to_overlapping_k_others(
         &mut self,
-        others: &[&IntervalSet],
+        others: &[&IntervalSetGeneric<T>],
         min_k: u32,
-    ) -> IntervalSet {
+    ) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -728,9 +750,9 @@ impl IntervalSet {
     /// Filter to those intervals that have an overlap in no more than k others
     pub fn filter_to_non_overlapping_k_others(
         &mut self,
-        others: &[&IntervalSet],
+        others: &[&IntervalSetGeneric<T>],
         max_k: u32,
-    ) -> IntervalSet {
+    ) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -748,17 +770,17 @@ impl IntervalSet {
     /// Build the union of two IntervalSets
     ///
     /// No merging is performed
-    pub fn union(&self, others: Vec<&IntervalSet>) -> IntervalSet {
-        let mut new_intervals: Vec<Range<u32>> = Vec::new();
+    pub fn union(&self, others: Vec<&IntervalSetGeneric<T>>) -> IntervalSetGeneric<T> {
+        let mut new_intervals: Vec<Range<T>> = Vec::new();
         new_intervals.extend_from_slice(&self.intervals);
         for o in others {
             new_intervals.extend_from_slice(&o.intervals);
         }
-        IntervalSet::new(&new_intervals[..]).unwrap()
+        IntervalSetGeneric::new(&new_intervals[..]).unwrap()
     }
 
     /// find the highest interval.end in our data set
-    fn _highest_end(&self) -> Option<u32> {
+    fn _highest_end(&self) -> Option<T> {
         match &self.root {
             // if we have a nclist we can just look at those intervals.
             Some(root) => root
@@ -771,7 +793,7 @@ impl IntervalSet {
         }
     }
 
-    fn _count_overlapping(&mut self, others: &[&IntervalSet]) -> Vec<u32> {
+    fn _count_overlapping(&mut self, others: &[&IntervalSetGeneric<T>]) -> Vec<u32> {
         self.ensure_nclist();
         let mut counts: Vec<u32> = vec![0; self.len()];
         for o in others {
@@ -789,9 +811,9 @@ impl IntervalSet {
     }
 }
 
-impl Eq for IntervalSet {}
-impl PartialEq for IntervalSet {
-    fn eq(&self, other: &IntervalSet) -> bool {
+impl<T: Rangable> Eq for IntervalSetGeneric<T> {}
+impl<T: Rangable> PartialEq for IntervalSetGeneric<T> {
+    fn eq(&self, other: &IntervalSetGeneric<T>) -> bool {
         (self.intervals == other.intervals) && (self.ids == other.ids)
     }
 }
@@ -802,8 +824,8 @@ pub trait RangePlus<T> {
     fn overlaps(&self, other: &Range<T>) -> bool;
 }
 
-impl RangePlus<u32> for Range<u32> {
-    fn overlaps(&self, other: &Range<u32>) -> bool {
+impl<T: Rangable> RangePlus<T> for Range<T> {
+    fn overlaps(&self, other: &Range<T>) -> bool {
         self.start < other.end && other.start < self.end && other.start < other.end
     }
 }
@@ -812,7 +834,7 @@ impl RangePlus<u32> for Range<u32> {
 #[allow(dead_code)]
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
-    use crate::IntervalSet;
+    use crate::{IntervalSet, IntervalSetGeneric};
     use std::ops::Range;
     #[test]
     fn test_has_overlap() {
@@ -849,6 +871,7 @@ mod tests {
         assert!(n.has_overlap(&(399..400)).unwrap());
         assert!(!n.has_overlap(&(400..4000)).unwrap());
     }
+
     #[test]
     fn test_iter() {
         let n = IntervalSet::new(&[100..150, 30..40, 200..400, 250..300]).unwrap();
@@ -1738,4 +1761,33 @@ mod tests {
             vec![true, true, false, false, true, true, false]
         );
     }
+
+
+      #[test]
+      fn test_has_overlap_u64() {
+        let r = vec![0..5, 10..15];
+        let mut n = IntervalSetGeneric::<u64>::new(&r).unwrap();
+        assert!(n.has_overlap(&(3..4)).unwrap());
+        assert!(n.has_overlap(&(5..20)).unwrap());
+        assert!(!n.has_overlap(&(6..10)).unwrap());
+        assert!(!n.has_overlap(&(100..110)).unwrap());
+        assert!(!n.has_overlap(&(3..3)).unwrap());
+      }
+
+      #[test]
+      fn test_has_overlap_i128() {
+        let r = vec![-50..-40, 10..15];
+        let mut n = IntervalSetGeneric::<i128>::new(&r).unwrap();
+        assert!(n.has_overlap(&(-45..46)).unwrap());
+        assert!(n.has_overlap(&(-50..-49)).unwrap());
+        assert!(!n.has_overlap(&(-39..-38)).unwrap());
+        assert!(!n.has_overlap(&(-40..-39)).unwrap());
+        assert!(n.has_overlap(&(5..20)).unwrap());
+        assert!(!n.has_overlap(&(6..10)).unwrap());
+        assert!(!n.has_overlap(&(100..110)).unwrap());
+        assert!(!n.has_overlap(&(3..3)).unwrap());
+      }
+
+
+
 }
