@@ -1,6 +1,6 @@
 [package]
 name = "nested_intervals"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Florian Finkernagel <finkernagel@imt.uni-marburg.de>"]
 edition = "2018"
 description = "nested & overlapping interval set functions, overlap, union, etc"
@@ -13,4 +13,4 @@ maintenance = { status = "actively-developed" }
 
 [dependencies]
 superslice="1.0.0"
-itertools = "0.8.0"
+itertools = "0.12.0"
