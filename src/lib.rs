@@ -825,10 +825,10 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     /// Build the union of two IntervalSets
     ///
     /// No merging is performed
-    pub fn union(&self, others: Vec<&IntervalSetGeneric<T>>) -> IntervalSetGeneric<T> {
+    pub fn union(&self, others: &[&IntervalSetGeneric<T>]) -> IntervalSetGeneric<T> {
         let mut new_intervals: Vec<Range<T>> = Vec::new();
         new_intervals.extend_from_slice(&self.intervals);
-        for o in others {
+        for o in others.iter() {
             new_intervals.extend_from_slice(&o.intervals);
         }
         IntervalSetGeneric::new(&new_intervals[..]).unwrap()
@@ -1363,7 +1363,7 @@ mod tests {
 
         let n = IntervalSet::new(&[10..36, 35..38, 40..50]).unwrap();
         let ni = n.invert(0, 100);
-        let n2 = n.union(vec![&ni]).merge_connected();
+        let n2 = n.union(&[&ni]).merge_connected();
         assert_eq!(n2.intervals, vec![0..100]);
 
         let n = IntervalSet::new(&[]).unwrap();
@@ -1375,25 +1375,25 @@ mod tests {
     fn test_union() {
         let n = IntervalSet::new(&[])
             .unwrap()
-            .union(vec![&IntervalSet::new(&[0..100]).unwrap()]);
+            .union(&[&IntervalSet::new(&[0..100]).unwrap()]);
         assert_eq!(n.intervals, vec![0..100]);
 
         let n = IntervalSet::new(&[0..10])
             .unwrap()
-            .union(vec![&IntervalSet::new(&[0..100]).unwrap()]);
+            .union(&[&IntervalSet::new(&[0..100]).unwrap()]);
         assert_eq!(n.intervals, vec![0..100, 0..10]);
 
         let n = IntervalSet::new(&[0..10])
             .unwrap()
-            .union(vec![&IntervalSet::new(&[0..100, 200..300]).unwrap()]);
+            .union(&[&IntervalSet::new(&[0..100, 200..300]).unwrap()]);
         assert_eq!(n.intervals, vec![0..100, 0..10, 200..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![2]]);
 
         let n = IntervalSet::new(&[0..10])
             .unwrap()
-            .union(vec![&IntervalSet::new(&[]).unwrap()]);
+            .union(&[&IntervalSet::new(&[]).unwrap()]);
         assert_eq!(n.intervals, vec![0..10]);
-        let n = IntervalSet::new(&[0..10]).unwrap().union(vec![
+        let n = IntervalSet::new(&[0..10]).unwrap().union(&[
             &IntervalSet::new(&[0..100]).unwrap(),
             &IntervalSet::new(&[200..300]).unwrap(),
         ]);
