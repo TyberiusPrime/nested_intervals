@@ -715,7 +715,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     /// Filter to those intervals that have an overlap in other.
     pub fn filter_to_overlapping(
         &self,
-        other: &mut IntervalSetGeneric<T>,
+        other: &IntervalSetGeneric<T>,
     ) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
@@ -761,7 +761,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     /// Filter to those intervals that have no overlap in other.
     pub fn filter_to_non_overlapping(
         &self,
-        other: &mut IntervalSetGeneric<T>,
+        other: &IntervalSetGeneric<T>,
     ) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
@@ -960,28 +960,28 @@ mod tests {
     #[test]
     fn test_query_multiple() {
         let n = IntervalSet::new(&[100..150, 30..40, 200..400, 250..300]).unwrap();
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&[0..5, 0..105]).unwrap());
+        let c = n.filter_to_overlapping(&IntervalSet::new(&[0..5, 0..105]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 100..150]);
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&[500..600, 550..700]).unwrap());
+        let c = n.filter_to_overlapping(&IntervalSet::new(&[500..600, 550..700]).unwrap());
         assert!(c.is_empty());
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&[45..230]).unwrap());
+        let c = n.filter_to_overlapping(&IntervalSet::new(&[45..230]).unwrap());
         assert_eq!(c.intervals, vec![100..150, 200..400]);
-        let c = n.filter_to_overlapping(&mut IntervalSet::new(&[45..101, 101..230]).unwrap());
+        let c = n.filter_to_overlapping(&IntervalSet::new(&[45..101, 101..230]).unwrap());
         assert_eq!(c.intervals, vec![100..150, 200..400]);
     }
 
     #[test]
     fn test_query_multiple_non_overlapping() {
         let n = IntervalSet::new(&[100..150, 30..40, 200..400, 250..300]).unwrap();
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&[0..5, 0..105]).unwrap());
+        let c = n.filter_to_non_overlapping(&IntervalSet::new(&[0..5, 0..105]).unwrap());
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&[500..600, 550..700]).unwrap());
+        let c = n.filter_to_non_overlapping(&IntervalSet::new(&[500..600, 550..700]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&[0..600]).unwrap());
+        let c = n.filter_to_non_overlapping(&IntervalSet::new(&[0..600]).unwrap());
         assert!(c.is_empty());
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&[45..230]).unwrap());
+        let c = n.filter_to_non_overlapping(&IntervalSet::new(&[45..230]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 250..300]);
-        let c = n.filter_to_non_overlapping(&mut IntervalSet::new(&[45..101, 101..230]).unwrap());
+        let c = n.filter_to_non_overlapping(&IntervalSet::new(&[45..101, 101..230]).unwrap());
         assert_eq!(c.intervals, vec![30..40, 250..300]);
     }
 
@@ -1405,28 +1405,28 @@ mod tests {
     fn test_substract() {
         let n = IntervalSet::new(&[])
             .unwrap()
-            .filter_to_non_overlapping(&mut IntervalSet::new(&[0..100]).unwrap());
+            .filter_to_non_overlapping(&IntervalSet::new(&[0..100]).unwrap());
         assert!(n.intervals.is_empty());
 
         let n = IntervalSet::new(&[0..10])
             .unwrap()
-            .filter_to_non_overlapping(&mut IntervalSet::new(&[0..100]).unwrap());
+            .filter_to_non_overlapping(&IntervalSet::new(&[0..100]).unwrap());
         assert!(n.intervals.is_empty());
 
         let n = IntervalSet::new(&[0..10, 100..150])
             .unwrap()
-            .filter_to_non_overlapping(&mut IntervalSet::new(&[0..100]).unwrap());
+            .filter_to_non_overlapping(&IntervalSet::new(&[0..100]).unwrap());
         assert_eq!(n.intervals, vec![100..150]);
 
         let n = IntervalSet::new(&[0..10, 100..150, 150..300])
             .unwrap()
-            .filter_to_non_overlapping(&mut IntervalSet::new(&[55..101]).unwrap());
+            .filter_to_non_overlapping(&IntervalSet::new(&[55..101]).unwrap());
         assert_eq!(n.intervals, vec![0..10, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![2]]);
 
         let n = IntervalSet::new(&[0..10, 5..6, 100..150, 150..300])
             .unwrap()
-            .filter_to_non_overlapping(&mut IntervalSet::new(&[55..101]).unwrap());
+            .filter_to_non_overlapping(&IntervalSet::new(&[55..101]).unwrap());
         assert_eq!(n.intervals, vec![0..10, 5..6, 150..300]);
         assert_eq!(n.ids, vec![vec![0], vec![1], vec![3]]);
     }
