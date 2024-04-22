@@ -343,10 +343,12 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
         let first = children
             .upper_bound_by_key(&query.start, |entry| self.intervals[entry.no as usize].end);
         if first == children.len() {
+            dbg!("no entry larger");
             // ie no entry larger...
             return Ok(false);
         }
-        let next = &self.intervals[first];
+        let next = &self.intervals[children[first].no as usize];
+        //no need to descend -
         Ok(next.overlaps(query))
     }
 
@@ -1860,5 +1862,60 @@ mod tests {
             vec![vec![99], vec![99], vec![99]]
         );
     }
+    #[test]
+    fn test_identical_starts () {
+
+        let a = vec![
+                (1.. 10),
+                (20.. 30),
+                (20.. 40),
+                (50.. 100),
+        ];
+        let iv_a = IntervalSet::new(&a).unwrap();
+        for range in a {
+            println!("{:?}", range);
+            println!("{}",iv_a.has_overlap(&(range.start..range.end)).unwrap());
+            assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
+        }
+
+        assert!(iv_a.query_overlapping(&(1.. 10)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(20.. 30)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(20.. 40)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(30.. 32)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(29.. 32)).intervals.len() == 2);
+    }
+
+    #[test]
+    fn test_identical_intervals () {
+        let a = vec![
+                (266854.. 266855),
+                (268816.. 268818),
+                (268816.. 268818),
+                (297502.. 297503),
+        ];
+        let iv_a = IntervalSet::new(&a).unwrap();
+        for range in a {
+            dbg!(&range);
+            assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
+        }
+        assert!(iv_a.query_overlapping(&(266854.. 266855)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(268816.. 268818)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(297502.. 297503)).intervals.len() == 1);
+
+    }
+
+    #[test]
+    fn test_nested () {
+        let a = vec![
+            (10.. 30),
+            (15.. 25),
+            (25.. 28),
+        ];
+        let iv_a = IntervalSet::new(&a).unwrap();
+        for range in a {
+            assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
+        }
+    }
+
 
 }

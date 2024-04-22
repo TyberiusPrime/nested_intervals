@@ -106,3 +106,8 @@ We currently can not
 - [ ] merge internally overlapping by intersecting them? What does than even mean
   for nested sets?
   
+
+
+# Changelog 
+
+- 0.6.0 - Fixed a bug with has_overlap, which would produce false negatives if intervals with identical starts were in the dataset.
