@@ -504,7 +504,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     /// Ids of the remaining intervals are unchanged
     pub fn merge_drop(&self) -> IntervalSetGeneric<T> {
         let mut keep = vec![true; self.len()];
-        let mut last_stop = T::zero();
+        let mut last_stop = T::min_value();
         for ii in 0..self.len() {
             if self.intervals[ii].start < last_stop {
                 keep[ii] = false;
