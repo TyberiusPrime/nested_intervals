@@ -1164,6 +1164,40 @@ mod tests {
     }
 
     #[test]
+    fn test_merge_drop_negative() {
+        // Signed coordinate types with negative starts are supported
+        // (see `test_has_overlap_i128`). Regression test for a panic /
+        // wrong result caused by initialising `last_stop` to `T::zero()`.
+
+        // Two disjoint intervals, both negative -> keep both.
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-40, -30..-20])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, vec![-50..-40, -30..-20]);
+        assert_eq!(n.ids, vec![vec![0], vec![1]]);
+        assert!(!n.any_overlapping());
+
+        // Disjoint intervals spanning zero -> keep both.
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-40, 10..15])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, vec![-50..-40, 10..15]);
+
+        // Overlapping negative intervals -> drop both.
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-30, -40..-20])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, Vec::<Range<i64>>::new());
+        assert!(!n.any_overlapping());
+
+        // Mixed: -50..-30 overlaps -40..-20 (dropped), 10..20 isolated (kept).
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-30, -40..-20, 10..20])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, vec![10..20]);
+    }
+
+    #[test]
     fn test_find_closest_start_left() {
         let n = IntervalSet::new(&[
             30..40,
