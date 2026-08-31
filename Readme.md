@@ -28,9 +28,9 @@ Code example:
 ```
   fn test_example() {
         let intervals = vec![0..20, 15..30, 50..100];
-        let mut interval_set = IntervalSet::new(&intervals);
+        let interval_set = IntervalSet::new(&intervals).unwrap();
         assert_eq!(interval_set.ids, vec![vec![0], vec![1], vec![2]]); // automatic ids, use new_with_ids otherwise
-        let hits = interval_set.query_overlapping(10..16);
+        let hits = interval_set.query_overlapping(&(10..16)).unwrap();
         assert_eq!(hits.intervals, [0..20, 15..30]);
         let merged = hits.merge_hull();
         assert_eq!(merged.intervals, [0..30]);
@@ -110,4 +110,15 @@ We currently can not
 
 # Changelog 
 
+- 0.7.0 - **Breaking**: `query_overlapping` now returns a `Result`, and both it and
+  `has_overlap` reject `start >= end` queries with `NegativeInterval`, the same way
+  the constructors reject such intervals. Previously `has_overlap` errored only on
+  `start > end` and answered `false` for empty queries, while `query_overlapping`
+  validated nothing at all. `RangePlus::overlaps` is now the plain, symmetric
+  half-open overlap test; the one-sided `other.start < other.end` guard it used to
+  carry has moved to the query entry points.
+  Fixed `overlap_status` reporting `false` for intervals that overlap a non-adjacent
+  interval (anything nested inside an earlier interval).
+  Fixed overflow panics in `covered_units` and `mean_interval_size` for results that
+  fit the interval type comfortably.
 - 0.6.0 - Fixed a bug with has_overlap, which would produce false negatives if intervals with identical starts were in the dataset.

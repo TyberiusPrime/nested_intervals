@@ -156,8 +156,8 @@ fn nclist_range_sort<T: Rangable>(a: &Range<T>, b: &Range<T>) -> Ordering {
 
 #[derive(Debug)]
 pub enum NestedIntervalError {
-    ///a negative interval was passed, ie. stop < start
-    NegativeInterval,
+    ///an empty or negative interval was passed, ie. stop <= start
+    InvertedInterval,
     ///intervals and ids had differing lengths
     IntervalIdMisMatch,
 }
@@ -169,7 +169,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     pub fn new(intervals: &[Range<T>]) -> Result<IntervalSetGeneric<T>, NestedIntervalError> {
         for r in intervals {
             if r.start >= r.end {
-                return Err(NestedIntervalError::NegativeInterval);
+                return Err(NestedIntervalError::InvertedInterval);
             }
         }
         let mut iv = intervals.to_vec();
@@ -200,7 +200,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     ) -> Result<IntervalSetGeneric<T>, NestedIntervalError> {
         for r in intervals {
             if r.start >= r.end {
-                return Err(NestedIntervalError::NegativeInterval);
+                return Err(NestedIntervalError::InvertedInterval);
             }
         }
         if intervals.len() != ids.len() {
@@ -329,9 +329,13 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
         }
     }
     /// Is there any interval overlapping with the query?
+    ///
+    /// # Errors
+    /// Queries are held to the same standard as stored intervals:
+    /// `start >= end` is a [`NestedIntervalError::NegativeInterval`].
     pub fn has_overlap(&self, query: &Range<T>) -> Result<bool, NestedIntervalError> {
-        if query.start > query.end {
-            return Err(NestedIntervalError::NegativeInterval);
+        if query.start >= query.end {
+            return Err(NestedIntervalError::InvertedInterval);
         }
         self.ensure_nclist();
         //has overlap is easy because all we have to do is scan the first level
@@ -360,11 +364,24 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     }
 
     /// retrieve a new IntervalSet with all intervals overlapping the query
-    pub fn query_overlapping(&self, query: &Range<T>) -> IntervalSetGeneric<T> {
+    ///
+    /// # Errors
+    /// Queries are held to the same standard as stored intervals:
+    /// `start >= end` is a [`NestedIntervalError::NegativeInterval`].
+    pub fn query_overlapping(
+        &self,
+        query: &Range<T>,
+    ) -> Result<IntervalSetGeneric<T>, NestedIntervalError> {
+        if query.start >= query.end {
+            return Err(NestedIntervalError::InvertedInterval);
+        }
         self.ensure_nclist();
         let mut collector = VecIntervalCollector::new();
         self.depth_first_search(self.root.borrow().as_ref().unwrap(), query, &mut collector);
-        IntervalSetGeneric::new_presorted(collector.intervals, collector.ids)
+        Ok(IntervalSetGeneric::new_presorted(
+            collector.intervals,
+            collector.ids,
+        ))
     }
 
     /// does this IntervalSet contain overlapping intervals?
@@ -381,17 +398,29 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     /// Result is a Vec<bool>
     pub fn overlap_status(&self) -> Vec<bool> {
         let mut result = vec![false; self.intervals.len()];
-        for (ii, (next, last)) in self
-            .intervals
-            .iter()
-            .skip(1)
-            .zip(self.intervals.iter())
-            .enumerate()
-        {
-            if last.overlaps(next) {
-                result[ii] = true; // ii starts at 0
-                result[ii + 1] = true;
+        // Comparing only neighbours is not enough - a nested interval may overlap
+        // an earlier one without overlapping its direct predecessor
+        // (0..100, 10..20, 30..40 -> 30..40 overlaps 0..100, but not 10..20).
+        // Since we are sorted by start, interval ii overlaps
+        //  - something before it, iff the highest end seen so far is > ii.start
+        //  - something after it, iff the next start is < ii.end (starts are ascending)
+        let mut highest_end: Option<T> = None;
+        for (ii, iv) in self.intervals.iter().enumerate() {
+            if let Some(highest_end) = highest_end {
+                if highest_end > iv.start {
+                    result[ii] = true;
+                }
             }
+            if let Some(next) = self.intervals.get(ii + 1) {
+                if next.start < iv.end {
+                    result[ii] = true;
+                    result[ii + 1] = true;
+                }
+            }
+            highest_end = Some(match highest_end {
+                Some(prev) => max(prev, iv.end),
+                None => iv.end,
+            });
         }
         result
     }
@@ -663,7 +692,9 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
         let merged = self.merge_hull();
         let mut total = T::zero();
         for iv in merged.intervals.iter() {
-            total = total + iv.end - iv.start;
+            //note the parenthesis - total + iv.end can overflow T
+            //even when the covered units comfortably fit
+            total = total + (iv.end - iv.start);
         }
         total
     }
@@ -673,7 +704,8 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     pub fn mean_interval_size(&self) -> f64 {
         let mut total = T::zero();
         for iv in self.intervals.iter() {
-            total = total + iv.end - iv.start;
+            //see covered_units - summing the lengths avoids a spurious overflow
+            total = total + (iv.end - iv.start);
         }
         let total: f64 = total.to_f64().unwrap();
         total / self.len() as f64
@@ -752,7 +784,10 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
         let other = other.merge_connected();
         for (ii, iv) in self.intervals.iter().enumerate() {
             let id = &self.ids[ii];
-            let overlapping = other.query_overlapping(iv).merge_connected();
+            let overlapping = other
+                .query_overlapping(iv)
+                .expect("stored intervals are always valid queries")
+                .merge_connected();
             for (new_iv, _) in overlapping.iter() {
                 //remember, these are disjoint
                 let start = max(iv.start, new_iv.start);
@@ -832,7 +867,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
 
     /// Build the union of two IntervalSets
     ///
-    /// No merging is performed
+    /// No merging is performed. Ids are lost.
     pub fn union(&self, others: &[&IntervalSetGeneric<T>]) -> IntervalSetGeneric<T> {
         let mut new_intervals: Vec<Range<T>> = Vec::new();
         new_intervals.extend_from_slice(&self.intervals);
@@ -884,12 +919,14 @@ impl<T: Rangable + std::fmt::Debug> PartialEq for IntervalSetGeneric<T> {
 /// Extend Range functionality with some often used bool functions
 pub trait RangePlus<T> {
     /// Does this interval overlap the other one?
+    /// Empty queries here are acceptable (and overlap
+    /// as expected), unlike within the IntervalSets.
     fn overlaps(&self, other: &Range<T>) -> bool;
 }
 
 impl<T: Rangable> RangePlus<T> for Range<T> {
     fn overlaps(&self, other: &Range<T>) -> bool {
-        self.start < other.end && other.start < self.end && other.start < other.end
+        self.start < other.end && other.start < self.end
     }
 }
 
@@ -907,7 +944,7 @@ mod tests {
         assert!(n.has_overlap(&(5..20)).unwrap());
         assert!(!n.has_overlap(&(6..10)).unwrap());
         assert!(!n.has_overlap(&(100..110)).unwrap());
-        assert!(!n.has_overlap(&(3..3)).unwrap());
+        assert!(n.has_overlap(&(3..3)).is_err());
 
         let r2 = vec![0..15, 0..6];
         let n = IntervalSet::new(&r2).unwrap();
@@ -951,18 +988,18 @@ mod tests {
     #[test]
     fn test_query() {
         let n = IntervalSet::new(&[100..150, 30..40, 200..400, 250..300]).unwrap();
-        let c = n.query_overlapping(&(0..5));
+        let c = n.query_overlapping(&(0..5)).unwrap();
         assert!(c.is_empty());
-        let c = n.query_overlapping(&(0..31));
+        let c = n.query_overlapping(&(0..31)).unwrap();
         assert_eq!(c.intervals, vec![30..40]);
-        let c = n.query_overlapping(&(200..250));
+        let c = n.query_overlapping(&(200..250)).unwrap();
         assert_eq!(c.intervals, vec![200..400]);
-        let c = n.query_overlapping(&(200..251));
+        let c = n.query_overlapping(&(200..251)).unwrap();
         assert_eq!(c.intervals, vec![200..400, 250..300]);
-        let c = n.query_overlapping(&(0..1000));
+        let c = n.query_overlapping(&(0..1000)).unwrap();
         dbg!(&c);
         assert_eq!(c.intervals, vec![30..40, 100..150, 200..400, 250..300]);
-        let c = n.query_overlapping(&(401..1000));
+        let c = n.query_overlapping(&(401..1000)).unwrap();
         assert!(c.is_empty());
     }
     #[test]
@@ -1604,7 +1641,7 @@ mod tests {
         let intervals = vec![0..20, 15..30, 50..100];
         let interval_set = IntervalSet::new(&intervals).unwrap();
         assert_eq!(interval_set.ids, vec![vec![0], vec![1], vec![2]]); // automatic ids, use new_with_ids otherwise
-        let hits = interval_set.query_overlapping(&(10..16));
+        let hits = interval_set.query_overlapping(&(10..16)).unwrap();
         assert_eq!(hits.intervals, [0..20, 15..30]);
         let merged = hits.merge_hull();
         assert_eq!(merged.intervals, [0..30]);
@@ -1810,6 +1847,105 @@ mod tests {
         );
     }
 
+    // bug: only neighbouring intervals were compared, so an interval nested
+    // inside an earlier one - but not touching its direct predecessor - was
+    // reported as non-overlapping
+    #[test]
+    fn test_overlap_status_nested() {
+        let n = IntervalSet::new(&[0..100, 10..20, 30..40, 50..60]).unwrap();
+        assert_eq!(n.overlap_status(), vec![true, true, true, true]);
+
+        let n = IntervalSet::new(&[0..30, 5..10, 20..25]).unwrap();
+        assert_eq!(n.overlap_status(), vec![true, true, true]);
+
+        // the non-overlapping ones must still be reported as false
+        let n = IntervalSet::new(&[0..100, 30..40, 200..210, 500..600]).unwrap();
+        assert_eq!(n.overlap_status(), vec![true, true, false, false]);
+
+        // touching is not overlapping
+        let n = IntervalSet::new(&[0..10, 10..20, 20..30]).unwrap();
+        assert_eq!(n.overlap_status(), vec![false, false, false]);
+
+        let n = IntervalSet::new(&[]).unwrap();
+        assert_eq!(n.overlap_status(), Vec::<bool>::new());
+    }
+
+    // bug: total + iv.end overflowed T even though the covered units fit
+    #[test]
+    fn test_covered_units_no_overflow() {
+        let n =
+            IntervalSetGeneric::<u32>::new(&[0..2_000_000_000, 2_100_000_000..4_000_000_000])
+                .unwrap();
+        assert_eq!(n.covered_units(), 3_900_000_000);
+
+        let n = IntervalSetGeneric::<i32>::new(&[-2_000_000_000..-1_000_000_000]).unwrap();
+        assert_eq!(n.covered_units(), 1_000_000_000);
+    }
+
+    // same overflow in the length accumulator
+    #[test]
+    fn test_mean_interval_size_no_overflow() {
+        let n =
+            IntervalSetGeneric::<u32>::new(&[0..2_000_000_000, 2_100_000_000..4_000_000_000])
+                .unwrap();
+        assert_eq!(n.mean_interval_size(), 1_950_000_000.0);
+    }
+
+    // queries are now validated like stored intervals: start >= end is an error,
+    // in both query entry points, rather than has_overlap quietly saying "false"
+    // and query_overlapping quietly returning nothing
+    #[test]
+    #[allow(clippy::reversed_empty_ranges)] // the inverted query is the point
+    fn test_invalid_queries_rejected() {
+        let n = IntervalSet::new(&[0..100]).unwrap();
+
+        // empty query
+        assert!(n.has_overlap(&(3..3)).is_err());
+        assert!(n.query_overlapping(&(3..3)).is_err());
+
+        // inverted query - query_overlapping used to silently return an empty set
+        // while has_overlap errored
+        assert!(n.has_overlap(&(20..10)).is_err());
+        assert!(n.query_overlapping(&(20..10)).is_err());
+
+        // an empty set still rejects the query rather than answering it
+        let e = IntervalSet::new(&[]).unwrap();
+        assert!(e.has_overlap(&(3..3)).is_err());
+        assert!(e.query_overlapping(&(3..3)).is_err());
+
+        // valid queries are unaffected
+        assert!(n.has_overlap(&(3..4)).unwrap());
+        assert_eq!(n.query_overlapping(&(3..4)).unwrap().intervals, vec![0..100]);
+    }
+
+    // overlaps() used to carry a one-sided emptiness guard, making it asymmetric
+    #[test]
+    fn test_overlaps_is_symmetric() {
+        use crate::RangePlus;
+        let pairs = [
+            (0..10, 5..15),
+            (0..10, 10..20),
+            (0..10, 20..30),
+            (0..10, 3..7),
+            (5..5, 0..10),
+            (5..5, 5..5),
+            (0..10, 5..5),
+        ];
+        for (a, b) in pairs.iter() {
+            assert_eq!(
+                a.overlaps(b),
+                b.overlaps(a),
+                "overlaps not symmetric for {:?} / {:?}",
+                a,
+                b
+            );
+        }
+        // and it is still the plain half-open overlap test
+        assert!((0..10).overlaps(&(5..15)));
+        assert!(!(0..10).overlaps(&(10..20)));
+        assert!((0..10).overlaps(&(5..5)));
+    }
+
     #[test]
     fn test_has_overlap_u64() {
         let r = vec![0..5, 10..15];
@@ -1818,7 +1954,7 @@ mod tests {
         assert!(n.has_overlap(&(5..20)).unwrap());
         assert!(!n.has_overlap(&(6..10)).unwrap());
         assert!(!n.has_overlap(&(100..110)).unwrap());
-        assert!(!n.has_overlap(&(3..3)).unwrap());
+        assert!(n.has_overlap(&(3..3)).is_err());
     }
 
     #[test]
@@ -1832,7 +1968,7 @@ mod tests {
         assert!(n.has_overlap(&(5..20)).unwrap());
         assert!(!n.has_overlap(&(6..10)).unwrap());
         assert!(!n.has_overlap(&(100..110)).unwrap());
-        assert!(!n.has_overlap(&(3..3)).unwrap());
+        assert!(n.has_overlap(&(3..3)).is_err());
     }
 
     #[test]
@@ -1906,11 +2042,11 @@ mod tests {
             assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
         }
 
-        assert!(iv_a.query_overlapping(&(1..10)).intervals.len() == 1);
-        assert!(iv_a.query_overlapping(&(20..30)).intervals.len() == 2);
-        assert!(iv_a.query_overlapping(&(20..40)).intervals.len() == 2);
-        assert!(iv_a.query_overlapping(&(30..32)).intervals.len() == 1);
-        assert!(iv_a.query_overlapping(&(29..32)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(1..10)).unwrap().intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(20..30)).unwrap().intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(20..40)).unwrap().intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(30..32)).unwrap().intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(29..32)).unwrap().intervals.len() == 2);
     }
 
     #[test]
@@ -1926,9 +2062,9 @@ mod tests {
             dbg!(&range);
             assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
         }
-        assert!(iv_a.query_overlapping(&(266854..266855)).intervals.len() == 1);
-        assert!(iv_a.query_overlapping(&(268816..268818)).intervals.len() == 2);
-        assert!(iv_a.query_overlapping(&(297502..297503)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(266854..266855)).unwrap().intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(268816..268818)).unwrap().intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(297502..297503)).unwrap().intervals.len() == 1);
     }
 
     #[test]
@@ -1959,7 +2095,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic("Bounds must be lower_bound <= upper_bound")]
+    #[should_panic(expected = "Bounds must be lower_bound <= upper_bound")]
     fn test_invert_empty_inverted_bounds() {
         let n = IntervalSet::new(&[]).unwrap();
         let m = n.invert(100, 50);

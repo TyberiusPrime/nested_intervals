@@ -2,6 +2,20 @@ nested_intervals Changelog
 =====================================
 
 
+0.7.0 -
+  Breaking changes:
+        - queries are validated like intervals: 
+          query_overlapping returns a Result, and both it and has_overlap 
+          reject start >= end. 
+        - RangePlus::overlaps is symmetric now.
+        - NestedIntervalError::NegativInterval is now NestedIntervalError::InvertedInterval
+          (to not confuse it with intervals with negative start coordinates, 
+           signed values are being supported)
+    Fixes:
+      - fixed overlap_status missing overlaps with non-adjacent (nested) intervals.
+      - fixed overflow panics in covered_units and mean_interval_size.
+      - fixed an error with signed intervals and merge_drop
+
 0.2.2 - fixed a bug in merge_split where outer intervals being split in "three" would not be processed correctly.
 0.2.1 - removed feature(nll)
 0.2.0 - switched from 'panic' input error handling to Result
