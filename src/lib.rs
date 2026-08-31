@@ -504,7 +504,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     /// Ids of the remaining intervals are unchanged
     pub fn merge_drop(&self) -> IntervalSetGeneric<T> {
         let mut keep = vec![true; self.len()];
-        let mut last_stop = T::zero();
+        let mut last_stop = T::min_value();
         for ii in 0..self.len() {
             if self.intervals[ii].start < last_stop {
                 keep[ii] = false;
@@ -1161,6 +1161,40 @@ mod tests {
             .unwrap()
             .merge_drop();
         assert_eq!(n.intervals, vec![40..50]);
+    }
+
+    #[test]
+    fn test_merge_drop_negative() {
+        // Signed coordinate types with negative starts are supported
+        // (see `test_has_overlap_i128`). Regression test for a panic /
+        // wrong result caused by initialising `last_stop` to `T::zero()`.
+
+        // Two disjoint intervals, both negative -> keep both.
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-40, -30..-20])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, vec![-50..-40, -30..-20]);
+        assert_eq!(n.ids, vec![vec![0], vec![1]]);
+        assert!(!n.any_overlapping());
+
+        // Disjoint intervals spanning zero -> keep both.
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-40, 10..15])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, vec![-50..-40, 10..15]);
+
+        // Overlapping negative intervals -> drop both.
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-30, -40..-20])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, Vec::<Range<i64>>::new());
+        assert!(!n.any_overlapping());
+
+        // Mixed: -50..-30 overlaps -40..-20 (dropped), 10..20 isolated (kept).
+        let n = IntervalSetGeneric::<i64>::new(&[-50..-30, -40..-20, 10..20])
+            .unwrap()
+            .merge_drop();
+        assert_eq!(n.intervals, vec![10..20]);
     }
 
     #[test]
