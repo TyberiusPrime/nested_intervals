@@ -343,7 +343,6 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
         let first = children
             .upper_bound_by_key(&query.start, |entry| self.intervals[entry.no as usize].end);
         if first == children.len() {
-            dbg!("no entry larger");
             // ie no entry larger...
             return Ok(false);
         }
