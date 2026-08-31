@@ -412,18 +412,22 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     ///
     /// Ids are **not** merged, the first set is being kept
     pub fn remove_duplicates(&self) -> IntervalSetGeneric<T> {
-        let mut keep = vec![false; self.len()];
-        keep[0] = true;
-        for (ix, (v1, v2)) in self
-            .intervals
-            .iter()
-            .skip(1)
-            .zip(self.intervals.iter())
-            .enumerate()
-        {
-            keep[ix + 1] = v1 != v2;
+        if self.is_empty() {
+            self.new_filtered(&[])
+        } else {
+            let mut keep = vec![false; self.len()];
+            keep[0] = true;
+            for (ix, (v1, v2)) in self
+                .intervals
+                .iter()
+                .skip(1)
+                .zip(self.intervals.iter())
+                .enumerate()
+            {
+                keep[ix + 1] = v1 != v2;
+            }
+            self.new_filtered(&keep)
         }
-        self.new_filtered(&keep)
     }
 
     /// remove empty intervals, ie. those with start == end
@@ -687,12 +691,18 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     ///
     /// Ids are lost
     pub fn invert(&self, lower_bound: T, upper_bound: T) -> IntervalSetGeneric<T> {
+        assert!(
+            lower_bound <= upper_bound,
+            " Bounds must be lower_bound <= upper_bound"
+        );
         let mut new_intervals: Vec<Range<T>> = Vec::new();
         let mut new_ids: Vec<Vec<u32>> = Vec::new();
 
         if self.is_empty() {
-            new_intervals.push(lower_bound..upper_bound);
-            new_ids.push(vec![0]);
+            if lower_bound < upper_bound {
+                new_intervals.push(lower_bound..upper_bound);
+                new_ids.push(vec![0]);
+            }
         } else {
             let lower = min(lower_bound, self.intervals[0].start);
             let upper = max(upper_bound, self._highest_end().unwrap());
@@ -715,10 +725,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
     }
 
     /// Filter to those intervals that have an overlap in other.
-    pub fn filter_to_overlapping(
-        &self,
-        other: &IntervalSetGeneric<T>,
-    ) -> IntervalSetGeneric<T> {
+    pub fn filter_to_overlapping(&self, other: &IntervalSetGeneric<T>) -> IntervalSetGeneric<T> {
         //I'm not certain this is the fastest way to do this - but it does work
         //depending on the number of queries, it might be faster
         //to do it the other way around, or do full scan of all entries here
@@ -733,7 +740,7 @@ impl<T: Rangable + std::fmt::Debug> IntervalSetGeneric<T> {
 
     /// Filter to those intervals having an overlap in other, and split/truncate them
     /// so the resulting intervals are fully contained within the intervals covered by other.
-    /// ids are being kept. 
+    /// ids are being kept.
     ///
     /// so 10..20 vs 5..11, 15..17, 18..30 -> 10..11, 15..17, 18..20
     pub fn filter_to_overlapping_and_split(
@@ -1861,10 +1868,7 @@ mod tests {
         let other = IntervalSet::new(&b).unwrap();
         let c = iv_a.filter_to_overlapping_and_split(&other);
         assert_eq!(c.intervals, vec![0..60, 75..99, 350..450, 490..500]);
-        assert_eq!(
-            c.ids,
-            vec![vec![1], vec![1],  vec![3], vec![4]]
-        );
+        assert_eq!(c.ids, vec![vec![1], vec![1], vec![3], vec![4]]);
     }
 
     #[test]
@@ -1875,11 +1879,11 @@ mod tests {
         let b = vec![0..50, 50..60, 75..110, 350..500];
         let other = IntervalSet::new(&b).unwrap();
         let c = iv_a.filter_to_overlapping_and_split(&other);
-        assert_eq!(c.intervals, vec![0..60, 75..100, 100..110, 350..450, 490..500]);
         assert_eq!(
-            c.ids,
-            vec![vec![1], vec![1], vec![2], vec![3], vec![4]]
+            c.intervals,
+            vec![0..60, 75..100, 100..110, 350..450, 490..500]
         );
+        assert_eq!(c.ids, vec![vec![1], vec![1], vec![2], vec![3], vec![4]]);
     }
 
     #[test]
@@ -1891,65 +1895,99 @@ mod tests {
         let other = IntervalSet::new(&b).unwrap();
         let c = iv_a.filter_to_overlapping_and_split(&other);
         assert_eq!(c.intervals, vec![10..11, 15..17, 18..20]);
-        assert_eq!(
-            c.ids,
-            vec![vec![99], vec![99], vec![99]]
-        );
+        assert_eq!(c.ids, vec![vec![99], vec![99], vec![99]]);
     }
     #[test]
-    fn test_identical_starts () {
-
-        let a = vec![
-                (1.. 10),
-                (20.. 30),
-                (20.. 40),
-                (50.. 100),
-        ];
+    fn test_identical_starts() {
+        let a = vec![(1..10), (20..30), (20..40), (50..100)];
         let iv_a = IntervalSet::new(&a).unwrap();
         for range in a {
             println!("{:?}", range);
-            println!("{}",iv_a.has_overlap(&(range.start..range.end)).unwrap());
+            println!("{}", iv_a.has_overlap(&(range.start..range.end)).unwrap());
             assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
         }
 
-        assert!(iv_a.query_overlapping(&(1.. 10)).intervals.len() == 1);
-        assert!(iv_a.query_overlapping(&(20.. 30)).intervals.len() == 2);
-        assert!(iv_a.query_overlapping(&(20.. 40)).intervals.len() == 2);
-        assert!(iv_a.query_overlapping(&(30.. 32)).intervals.len() == 1);
-        assert!(iv_a.query_overlapping(&(29.. 32)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(1..10)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(20..30)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(20..40)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(30..32)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(29..32)).intervals.len() == 2);
     }
 
     #[test]
-    fn test_identical_intervals () {
+    fn test_identical_intervals() {
         let a = vec![
-                (266854.. 266855),
-                (268816.. 268818),
-                (268816.. 268818),
-                (297502.. 297503),
+            (266854..266855),
+            (268816..268818),
+            (268816..268818),
+            (297502..297503),
         ];
         let iv_a = IntervalSet::new(&a).unwrap();
         for range in a {
             dbg!(&range);
             assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
         }
-        assert!(iv_a.query_overlapping(&(266854.. 266855)).intervals.len() == 1);
-        assert!(iv_a.query_overlapping(&(268816.. 268818)).intervals.len() == 2);
-        assert!(iv_a.query_overlapping(&(297502.. 297503)).intervals.len() == 1);
-
+        assert!(iv_a.query_overlapping(&(266854..266855)).intervals.len() == 1);
+        assert!(iv_a.query_overlapping(&(268816..268818)).intervals.len() == 2);
+        assert!(iv_a.query_overlapping(&(297502..297503)).intervals.len() == 1);
     }
 
     #[test]
-    fn test_nested () {
-        let a = vec![
-            (10.. 30),
-            (15.. 25),
-            (25.. 28),
-        ];
+    fn test_nested() {
+        let a = vec![(10..30), (15..25), (25..28)];
         let iv_a = IntervalSet::new(&a).unwrap();
         for range in a {
             assert!(iv_a.has_overlap(&(range.start..range.end)).unwrap());
         }
     }
 
+    // bug: index out of bounds panic on empty set
+    #[test]
+    fn test_remove_duplicates_empty() {
+        let n = IntervalSet::new(&[]).unwrap();
+        let m = n.remove_duplicates();
+        assert_eq!(m.len(), 0);
+    }
+    // documents current behaviour: distance_left = pos - l.0.start overflows
+    // for pos=0, l.start=i64::MIN ("attempt to subtract with overflow")
+    // this is expected, i64::MIN = -i64::MAX -1 (the 0 eats one position on the 'positive' side)
+    #[test]
+    #[should_panic]
+    fn test_find_closest_start_signed_extremes() {
+        let n = IntervalSetGeneric::<i64>::new(&[i64::MIN..i64::MIN + 1, i64::MAX - 1..i64::MAX])
+            .unwrap();
+        let _ = n.find_closest_start(0);
+    }
 
+    #[test]
+    #[should_panic("Bounds must be lower_bound <= upper_bound")]
+    fn test_invert_empty_inverted_bounds() {
+        let n = IntervalSet::new(&[]).unwrap();
+        let m = n.invert(100, 50);
+        for (r, _) in m.iter() {
+            assert!(r.start <= r.end, "invalid interval produced: {:?}", r);
+        }
+    }
+
+    // bug: empty-set path pushes a zero-width interval -> 40..40
+    #[test]
+    fn test_invert_empty_zero_bounds() {
+        let n = IntervalSet::new(&[]).unwrap();
+        let m = n.invert(40, 40);
+        dbg!(&m);
+        for (r, _) in m.iter() {
+            assert!(r.start < r.end, "empty interval produced: {:?}", r);
+        }
+    }
+
+    #[test]
+    fn test_invert_empty_real_bounds() {
+        let n = IntervalSet::new(&[]).unwrap();
+        let m = n.invert(40, 400);
+        assert_eq!(m.intervals, vec![40..400,]);
+        dbg!(&m);
+        for (r, _) in m.iter() {
+            assert!(r.start < r.end, "empty interval produced: {:?}", r);
+        }
+    }
 }
